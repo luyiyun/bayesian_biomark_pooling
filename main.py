@@ -76,7 +76,8 @@ def save_h5(
         h5.create_dataset("values", data=arr)
         h5.attrs["index"] = list(index)
         h5.attrs["columns"] = list(columns)
-        h5.attrs["params"] = kwargs
+        for k, v in kwargs.items():
+            h5.attrs[k] = v
 
 
 def load_h5(
@@ -86,7 +87,10 @@ def load_h5(
         arr = h5["values"][:]
         index = h5.attrs["index"]
         columns = h5.attrs["columns"]
-        params = h5.attrs["params"]
+        params = {}
+        for k, v in h5.attrs.items():
+            if k not in ["index", "columns"]:
+                params[k] = v
     return arr, index, columns, params
 
 
