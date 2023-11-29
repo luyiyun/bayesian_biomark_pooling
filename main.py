@@ -16,8 +16,16 @@ from src.method import bayesian_analysis
 from src.simulate import simulate
 
 # suppress the pymc messages
-logger = logging.getLogger("pymc")
-logger.setLevel(logging.ERROR)
+logger_pymc = logging.getLogger("pymc")
+logger_pymc.setLevel(logging.ERROR)
+
+logger_main = logging.getLogger("main")
+logger_main.setLevel(logging.INFO)
+ch = logging.StreamHandler()
+ch.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(message)s")
+ch.setFormatter(formatter)
+logger_main.addHandler(ch)
 
 
 def simulate_bayesian_evaluation(
@@ -106,8 +114,12 @@ def summarise_results(
     return pd.DataFrame(res, index=index, columns=columns)
 
 
-def main():
+if __name__ == "__main__":
     parser = ArgumentParser()
+    parser.add_argument(
+        "--save_action", choices=["cover", "raise", "ignore"], default="raise"
+    )
+
     parser.add_argument("--nrepeat", type=int, default=100)
     parser.add_argument("--ncores", type=int, default=12)
 
@@ -123,6 +135,21 @@ def main():
     os.makedirs(save_root, exist_ok=True)
 
     for prev_i, or_i in product(args.prevalence, args.OR):
+        save_name = ("prev%.2f-OR%.2f" % (prev_i, or_i)).replace(".", "_")
+        save_name = osp.join(save_root, save_name + ".h5")
+        if osp.exists(save_name):
+            if args.save_action == "raise":
+                raise FileExistsError("%s existed." % save_name)
+            elif args.save_action == "ignore":
+                logger_main.info(
+                    "%s existed, continue next trial." % save_name
+                )
+                continue
+            elif args.save_action == "cover":
+                logger_main.info("%s existed, it will be covered." % save_name)
+            else:
+                raise ValueError
+
         arr, index, columns = parallel_run(
             range(args.nrepeat),
             ncores=args.ncores,
@@ -130,16 +157,11 @@ def main():
             OR=or_i,
         )
         print(summarise_results(arr, index, columns))
-        save_name = ("prev%.2f-OR%.2f" % (prev_i, or_i)).replace(".", "_")
         save_h5(
-            osp.join(save_root, save_name + ".h5"),
+            save_name,
             arr,
             index,
             columns,
             prevalence=prev_i,
             OR=or_i,
         )
-
-
-if __name__ == "__main__":
-    main()
