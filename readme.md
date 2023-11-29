@@ -77,7 +77,7 @@ $$
 4. 每个$s$下，移除部分$X_{si}$。
 
 ### Experiments
-1. 不同的prevalence？
+1. 不同prevalence, 不同OR值下的结果？
 2. 不同的$\sigma_{es}^2$大小，如果较大，可能会不符合Sloan' method的假设？
 3. $X_{si}$可知的样本比例的影响，特别是如果存在一些studies($s$)没有$X_{si}$？
 4. 可能存在一种情况：一些studies只有$X_{si}$，另一些studies只有$W_{si}$？

@@ -32,6 +32,7 @@ def simulate_bayesian_evaluation(
         solver="mcmc",
         var_names=["a", "b", "a_s", "b_s", "beta0", "betax"],
         nchains=1,
+        seed=seed,
     )
     eval_res = evaluate(true_params, baye_res)
     return eval_res
@@ -110,8 +111,12 @@ def main():
     parser.add_argument("--nrepeat", type=int, default=100)
     parser.add_argument("--ncores", type=int, default=12)
 
-    parser.add_argument("--prevalence", type=float, nargs="+", default=[0.05])
-    parser.add_argument("--OR", type=float, nargs="+", default=[1.25])
+    parser.add_argument(
+        "--prevalence", type=float, nargs="+", default=[0.05, 0.25, 0.50]
+    )
+    parser.add_argument(
+        "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
+    )
     args = parser.parse_args()
 
     save_root = "./results/"
@@ -134,9 +139,6 @@ def main():
             prevalence=prev_i,
             OR=or_i,
         )
-
-    # arr, index, columns = load_h5(osp.join(save_root, "test.h5"))
-    # print(summarise_results(arr, index, columns))
 
 
 if __name__ == "__main__":

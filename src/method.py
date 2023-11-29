@@ -15,6 +15,7 @@ def bayesian_analysis(
     solver: Literal["mcmc", "vi"] = "mcmc",
     return_obj: Literal["raw", "point_interval"] = "point_interval",
     var_names: Optional[Sequence[str]] = None,
+    seed: Optional[int] = None,
 ) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
     assert solver in ["mcmc", "vi"]
     assert return_obj in ["raw", "point_interval"]
@@ -91,14 +92,18 @@ def bayesian_analysis(
 
         if solver == "mcmc":
             res = pm.sample(
-                nsample, tune=ntunes, chains=nchains, progressbar=pbar
+                nsample,
+                tune=ntunes,
+                chains=nchains,
+                progressbar=pbar,
+                random_seed=list(range(seed, seed + nchains)),
             )
             if return_obj == "point_interval":
                 res_df = az.summary(
                     res, hdi_prob=0.95, kind="stats", var_names=var_names
                 )
         elif solver == "vi":
-            res = pm.fit(progressbar=pbar)
+            res = pm.fit(progressbar=pbar, random_seed=seed)
             if return_obj == "point_interval":
                 # TODO: 有一些param是log__之后的
                 nparam = res.ndim
