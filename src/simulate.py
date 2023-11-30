@@ -1,8 +1,27 @@
+import logging
+import os
 from typing import Dict, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 from scipy import integrate, optimize, special, stats
+
+
+def get_beta0_by_prevalence(
+    prevalence: float, beta1: float, mu_x: float, sigma2_x: float
+) -> float:
+    def p_Y(beta0, beta1, mu_x, sigma_x):
+        return integrate.quad(
+            lambda x: stats.norm.pdf(x, mu_x, sigma_x)
+            * special.expit(beta0 + beta1 * x),
+            -np.inf,
+            np.inf,
+        )[0]
+
+    beta0 = optimize.root_scalar(
+        lambda x: p_Y(x, beta1, mu_x, sigma2_x) - prevalence, x0=0.0
+    ).root
+    return beta0
 
 
 def simulate(
@@ -20,6 +39,8 @@ def simulate(
     direction: Literal["x->w", "w->x"] = "x->w",
 ) -> Tuple[pd.DataFrame, Dict]:
     assert direction in ["x->w", "w->x"]
+    logger = logging.getLogger("main.simulate")
+
     ns = None
     for parami in [a, b, sigma2_e, beta0, beta1]:
         if isinstance(parami, (int, float)):
@@ -36,17 +57,11 @@ def simulate(
 
     if prevalence is not None:
         # compute the suitable beta0 to produce necessary prevalence
-        def p_Y(beta0, beta1, mu_x, sigma_x):
-            return integrate.quad(
-                lambda x: stats.norm.pdf(x, mu_x, sigma_x)
-                * special.expit(beta0 + beta1 * x),
-                -np.inf,
-                np.inf,
-            )[0]
-
-        beta0 = optimize.root_scalar(
-            lambda x: p_Y(x, beta1, mu_x, sigma2_x) - prevalence, x0=0.0
-        ).root
+        beta0 = get_beta0_by_prevalence(prevalence, beta1, mu_x, sigma2_x)
+        logger.info(
+            "(pid:%d)Get the beta0 = %.4f by prevalence %.4f"
+            % (os.getpid(), beta0, prevalence)
+        )
 
     a, b, sigma2_e, beta0, beta1 = (
         np.array(x) for x in [a, b, sigma2_e, beta0, beta1]

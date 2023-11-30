@@ -15,9 +15,11 @@ from "Statistical methods for biomarker data pooled from multiple nested case-co
 模型可以简单表示为：$W\rightarrow X\rightarrow Y$
 
 1. 生成$X_{si}$，$W_{si}$，需要设置参数$a_s, b_s, \mu_x, \sigma^2_x, \sigma^2_{ws}$；
+
 $$
 \left(\begin{array}{c}X_{s i} \\ W_{s i} \\ e_{s i}\end{array}\right) \sim \operatorname{MVN}\left(\left(\begin{array}{c}\mu_{x} \\ \left(\mu_{x}-a_{s}\right) / b_{s} \\ 0\end{array}\right),\left(\begin{array}{ccc}\sigma_{x}^{2} & b_{s} \sigma_{w s}^{2} & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2} \\ \cdot & \sigma_{w s}^{2} & 0 \\ \cdot & \cdot & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2}\end{array}\right)\right)
 $$
+
 这等价于以下的过程：
 $$
 \begin{array}{}

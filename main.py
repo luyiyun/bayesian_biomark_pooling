@@ -10,6 +10,7 @@ import h5py
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 from src.evaluate import evaluate
 from src.method import bayesian_analysis
@@ -65,11 +66,12 @@ def parallel_run(
                 )
                 for seedi in seeds
             ]
-            for temp_resi in tqdm(
-                temp_reses, desc="prev=%.2f,OR=%.2f" % (prevalence, OR)
-            ):
-                resi = temp_resi.get()
-                all_res.append(resi.values)
+            with logging_redirect_tqdm():  # make logging msg showed by tqdm
+                for temp_resi in tqdm(
+                    temp_reses, desc="prev=%.2f,OR=%.2f" % (prevalence, OR)
+                ):
+                    resi = temp_resi.get()
+                    all_res.append(resi.values)
     all_res = np.stack(all_res, axis=0)
     return all_res, resi.index, resi.columns
 
