@@ -4,13 +4,12 @@ import os
 import os.path as osp
 from argparse import ArgumentParser
 from itertools import product
-from typing import Any, Dict, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from tqdm.contrib.logging import logging_redirect_tqdm
 
 from src.evaluate import evaluate
 from src.method import bayesian_analysis
@@ -19,6 +18,9 @@ from src.simulate import simulate
 # suppress the pymc messages
 logger_pymc = logging.getLogger("pymc")
 logger_pymc.setLevel(logging.ERROR)
+
+logger_simu = logging.getLogger("main.simulate")
+logger_simu.setLevel(logging.ERROR)
 
 logger_main = logging.getLogger("main")
 logger_main.setLevel(logging.INFO)
@@ -29,80 +31,109 @@ ch.setFormatter(formatter)
 logger_main.addHandler(ch)
 
 
-def simulate_bayesian_evaluation(
-    seed: int, prevalence: float, OR: float
-) -> pd.DataFrame:
-    sim_dat, true_params = simulate(
-        seed=seed, prevalence=prevalence, beta1=np.log(OR)
-    )
-    baye_res = bayesian_analysis(
-        sim_dat,
-        pbar=False,
-        solver="mcmc",
-        var_names=["a", "b", "a_s", "b_s", "beta0", "betax"],
-        nchains=1,
-        seed=seed,
-    )
+def _pipeline(
+    seed: int,
+    simulate_kwargs: Dict = {},
+    analysis_kwargs: Dict = {},
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    sim_dat, true_params = simulate(seed=seed, **simulate_kwargs)
+    sim_dat["S"] = sim_dat["S"] - 1  # 模拟实验是从1开始的，现在改成0
+    baye_res = bayesian_analysis(sim_dat, seed=seed, **analysis_kwargs)
     eval_res = evaluate(true_params, baye_res)
-    return eval_res
+    # 使用ndarray和list会提高多线程的效率
+    return (
+        (sim_dat.values.astype(float), sim_dat.columns.tolist()),
+        (
+            baye_res.values.astype(float),
+            baye_res.columns.tolist(),
+            baye_res.index.tolist(),
+        ),
+        (
+            eval_res.values.astype(float),
+            eval_res.columns.tolist(),
+            eval_res.index.tolist(),
+        ),
+    )
 
 
-def parallel_run(
-    seeds: Sequence[int],
-    ncores: int = 4,
-    prevalence: float = 0.5,
-    OR: float = 1.25,
-) -> Tuple[np.ndarray, pd.Index, pd.Index]:
-    all_res = []
-    if ncores <= 1:
-        for seedi in seeds:
-            resi = simulate_bayesian_evaluation(seedi)
-            all_res.append(resi.values)
-    else:
-        with mp.Pool(ncores) as pool:
-            temp_reses = [
-                pool.apply_async(
-                    simulate_bayesian_evaluation, (seedi, prevalence, OR)
-                )
-                for seedi in seeds
-            ]
-            with logging_redirect_tqdm():  # make logging msg showed by tqdm
+class Trials:
+    def __init__(
+        self,
+        nrepeat: int,
+        ncores: int = 1,
+        prevalence: float = 0.05,
+        OR: float = 1.25,
+        direction: str = "x->w",
+    ) -> None:
+        self._nrepeat = nrepeat
+        self._ncores = ncores
+        self._simulate_kwargs = dict(
+            prevalence=prevalence, beta1=np.log(OR), direction=direction
+        )
+        self._name = (
+            "prev%.2f-OR%.2f-direct[%s]" % (prevalence, OR, direction)
+        ).replace(".", "_")
+
+    def simulate(
+        self, nrepeat: Optional[int] = None
+    ) -> Tuple[np.ndarray, List[str]]:
+        arr = []
+        for i in tqdm(
+            range(nrepeat if nrepeat is not None else self._nrepeat),
+            desc="Simulate %s: " % self._name,
+        ):
+            sim_dat, _ = simulate(seed=i, **self._simulate_kwargs)
+            arr.append(sim_dat.values.astype(float))
+        arr = np.stack(arr, axis=0)
+        columns = sim_dat.columns.tolist()
+        return arr, columns
+
+    def pipeline(
+        self, nrepeat: Optional[int] = None, ncores: Optional[int] = None
+    ):
+        nrepeat = nrepeat if nrepeat is not None else self._nrepeat
+        ncores = ncores if ncores is not None else self._ncores
+        res_simu, res_anal, res_eval = [], [], []
+        if ncores <= 1:
+            for i in tqdm(
+                range(nrepeat),
+                desc="Pipeline %s: " % self._name,
+            ):
+                (
+                    (sim_i, sim_col),
+                    (ana_i, ana_col, ana_ind),
+                    (eva_i, eva_col, eva_ind),
+                ) = _pipeline(i, self._simulate_kwargs, {})
+                res_simu.append(sim_i)
+                res_anal.append(ana_i)
+                res_eval.append(eva_i)
+        else:
+            with mp.Pool(ncores) as pool:
+                temp_reses = [
+                    pool.apply_async(
+                        _pipeline, (seedi, self._simulate_kwargs, {})
+                    )
+                    for seedi in range(nrepeat)
+                ]
                 for temp_resi in tqdm(
-                    temp_reses, desc="prev=%.2f,OR=%.2f" % (prevalence, OR)
+                    temp_reses, desc="Pipeline %s: " % self._name
                 ):
-                    resi = temp_resi.get()
-                    all_res.append(resi.values)
-    all_res = np.stack(all_res, axis=0)
-    return all_res, resi.index, resi.columns
-
-
-def save_h5(
-    fn: str,
-    arr: np.ndarray,
-    index: Sequence[str],
-    columns: Sequence[str],
-    **kwargs: Dict[str, Any]
-) -> None:
-    with h5py.File(fn, "w") as h5:
-        h5.create_dataset("values", data=arr)
-        h5.attrs["index"] = list(index)
-        h5.attrs["columns"] = list(columns)
-        for k, v in kwargs.items():
-            h5.attrs[k] = v
-
-
-def load_h5(
-    fn: str,
-) -> Tuple[np.ndarray, Sequence[str], Sequence[str], Dict[str, Any]]:
-    with h5py.File(fn, "r") as h5:
-        arr = h5["values"][:]
-        index = h5.attrs["index"]
-        columns = h5.attrs["columns"]
-        params = {}
-        for k, v in h5.attrs.items():
-            if k not in ["index", "columns"]:
-                params[k] = v
-    return arr, index, columns, params
+                    (
+                        (sim_i, sim_col),
+                        (ana_i, ana_col, ana_ind),
+                        (eva_i, eva_col, eva_ind),
+                    ) = temp_resi.get()
+                    res_simu.append(sim_i)
+                    res_anal.append(ana_i)
+                    res_eval.append(eva_i)
+        res_simu = np.stack(res_simu, axis=0)
+        res_anal = np.stack(res_anal, axis=0)
+        res_eval = np.stack(res_eval, axis=0)
+        return (
+            (res_simu, sim_col),
+            (res_anal, ana_col, ana_ind),
+            (res_eval, eva_col, eva_ind),
+        )
 
 
 def summarise_results(
@@ -119,6 +150,12 @@ def summarise_results(
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument(
+        "--tasks",
+        type=str,
+        choices=["simulate", "summarize", "all"],
+        default="all",
+    )
+    parser.add_argument(
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
 
@@ -131,39 +168,57 @@ if __name__ == "__main__":
     parser.add_argument(
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
+    parser.add_argument(
+        "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
+    )
     args = parser.parse_args()
 
     save_root = "./results/"
     os.makedirs(save_root, exist_ok=True)
 
     for prev_i, or_i in product(args.prevalence, args.OR):
-        save_name = ("prev%.2f-OR%.2f" % (prev_i, or_i)).replace(".", "_")
-        save_name = osp.join(save_root, save_name + ".h5")
-        if osp.exists(save_name):
-            if args.save_action == "raise":
-                raise FileExistsError("%s existed." % save_name)
-            elif args.save_action == "ignore":
-                logger_main.info(
-                    "%s existed, continue next trial." % save_name
-                )
-                continue
-            elif args.save_action == "cover":
-                logger_main.info("%s existed, it will be covered." % save_name)
-            else:
-                raise ValueError
-
-        arr, index, columns = parallel_run(
-            range(args.nrepeat),
+        trial_i = Trials(
+            nrepeat=args.nrepeat,
             ncores=args.ncores,
             prevalence=prev_i,
             OR=or_i,
+            direction=args.direction,
         )
-        print(summarise_results(arr, index, columns))
-        save_h5(
-            save_name,
-            arr,
-            index,
-            columns,
-            prevalence=prev_i,
-            OR=or_i,
-        )
+        if args.tasks == "simulate":
+            save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
+            arr, cols = trial_i.simulate()
+            with h5py.File(save_fn, "w") as h5:
+                g_sim = h5.create_group("simulate")
+                g_sim.attrs["columns"] = cols
+                g_sim.create_dataset("values", data=arr)
+        elif args.tasks == "summarize":
+            res_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
+            with h5py.File(res_fn, "a") as h5:
+                g_eva = h5["evaluate"]
+                print(
+                    summarise_results(
+                        g_eva["values"][:],
+                        g_eva.attrs["index"],
+                        g_eva.attrs["columns"],
+                    ),
+                )
+        elif args.tasks == "all":
+            save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
+            (
+                (sim_i, sim_col),
+                (ana_i, ana_col, ana_ind),
+                (eva_i, eva_col, eva_ind),
+            ) = trial_i.pipeline()
+            with h5py.File(save_fn, "w") as h5:
+                g_sim = h5.create_group("simulate")
+                g_sim.attrs["columns"] = sim_col
+                g_sim.create_dataset("values", data=sim_i)
+                g_ana = h5.create_group("analysis")
+                g_ana.attrs["columns"] = ana_col
+                g_ana.attrs["index"] = ana_ind
+                g_ana.create_dataset("values", data=ana_i)
+                g_eva = h5.create_group("evaluate")
+                g_eva.attrs["columns"] = eva_col
+                g_eva.attrs["index"] = eva_ind
+                g_eva.create_dataset("values", data=eva_i)
+            print(summarise_results(eva_i, eva_ind, eva_col))

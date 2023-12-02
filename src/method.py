@@ -1,4 +1,4 @@
-from typing import Literal, Optional, Sequence, Union
+from typing import Literal, Optional, Tuple, Union
 
 import arviz as az
 import numpy as np
@@ -10,11 +10,11 @@ def bayesian_analysis(
     df: pd.DataFrame,
     nsample: int = 1000,
     ntunes: int = 1000,
-    nchains: int = 4,
-    pbar: bool = True,
+    nchains: int = 1,
+    pbar: bool = False,
     solver: Literal["mcmc", "vi"] = "mcmc",
     return_obj: Literal["raw", "point_interval"] = "point_interval",
-    var_names: Optional[Sequence[str]] = None,
+    var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
     seed: Optional[int] = None,
 ) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
     assert solver in ["mcmc", "vi"]
@@ -100,7 +100,7 @@ def bayesian_analysis(
             )
             if return_obj == "point_interval":
                 res_df = az.summary(
-                    res, hdi_prob=0.95, kind="stats", var_names=var_names
+                    res, hdi_prob=0.95, kind="stats", var_names=list(var_names)
                 )
         elif solver == "vi":
             res = pm.fit(progressbar=pbar, random_seed=seed)

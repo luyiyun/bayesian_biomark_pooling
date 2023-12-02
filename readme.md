@@ -1,10 +1,8 @@
 # Hierarchical Bayesian Models for pooled and calibrated biomarker data
 
-
 ## Model
 
 $$W\leftarrow X\rightarrow Y\leftarrow Z$$
-
 
 ## Simulation
 

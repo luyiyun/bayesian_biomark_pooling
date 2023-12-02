@@ -95,12 +95,12 @@ def simulate(
             "X_true": X.flatten(),
             "Y": Y.flatten(),
             "X": X_obs.flatten(),
-            "S": np.tile(np.arange(ns), Ns),
+            "S": np.tile(np.arange(ns), Ns) + 1,  # 从1开始
+            "H": ~np.isnan(X_obs.flatten())
         }
     )
 
     return res, {
-        "beta0": beta0,
         "betax": beta1,
         "a_s": a,
         "b_s": b,
