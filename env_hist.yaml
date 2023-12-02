@@ -1,0 +1,15 @@
+name: pymc_env
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - pymc[version='>=5']
+  - jupyterlab
+  - ca-certificates
+  - openssl
+  - numpy==1.25.2
+  - certifi
+  - python-graphviz
+  - ipdb
+  - tqdm
+prefix: /home/rongzhiwei/mambaforge/envs/pymc_env
