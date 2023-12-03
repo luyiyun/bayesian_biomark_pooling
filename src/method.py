@@ -12,20 +12,20 @@ def bayesian_analysis(
     ntunes: int = 1000,
     nchains: int = 1,
     pbar: bool = False,
-    solver: Literal["mcmc", "vi"] = "mcmc",
+    solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
     return_obj: Literal["raw", "point_interval"] = "point_interval",
     var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
     seed: Optional[int] = None,
 ) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
-    assert solver in ["mcmc", "vi"]
+    assert solver in ["pymc", "blackjax", "numpyro", "vi"]
     assert return_obj in ["raw", "point_interval"]
 
     mu_x, sigma_x = np.mean(df["X"]), np.std(df["X"])
     all_s = df["S"].unique()
-    # ns = all_s.shape[0]
+    ns = all_s.shape[0]
     # N_X_no_obs = df["X"].isna().sum()
 
-    with pm.Model(coords={"S": all_s}):
+    with pm.Model():
         # a = pm.Flat("a")
         # b = pm.Flat("b")
         a = pm.Normal("a", 0, 10)
@@ -45,11 +45,11 @@ def bayesian_analysis(
 
         betax = pm.Flat("betax")
 
-        a_s = pm.Normal("a_s", a, sigma_a, dims="S")
-        b_s = pm.Normal("b_s", b, sigma_b, dims="S")
-        beta0s = pm.Normal("beta0s", beta0, sigma_0, dims="S")
+        a_s = pm.Normal("a_s", a, sigma_a, size=ns)
+        b_s = pm.Normal("b_s", b, sigma_b, size=ns)
+        beta0s = pm.Normal("beta0s", beta0, sigma_0, size=ns)
         sigma_ws = pm.Gamma(
-            "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, dims="S"
+            "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, size=ns
         )
         # X_no_obs = pm.Normal("X_no_obs", m_x, sigma_x, size=(N_X_no_obs,))
 
@@ -90,13 +90,14 @@ def bayesian_analysis(
                 observed=dfi["Y"].values,
             )
 
-        if solver == "mcmc":
+        if solver != "vi":
             res = pm.sample(
                 nsample,
                 tune=ntunes,
                 chains=nchains,
                 progressbar=pbar,
                 random_seed=list(range(seed, seed + nchains)),
+                nuts_sampler=solver,
             )
             if return_obj == "point_interval":
                 res_df = az.summary(
@@ -158,8 +159,8 @@ def bayesian_analysis(
                         {"mean": res.mean.eval(), "sd": res.std.eval()},
                         index=param_names,
                     )
-                res_df["ci_2.5%"] = res_df["mean"] - 1.96 * res_df["sd"]
-                res_df["ci_97.5%"] = res_df["mean"] + 1.96 * res_df["sd"]
+                res_df["hdi_2.5%"] = res_df["mean"] - 1.96 * res_df["sd"]
+                res_df["hdi_97.5%"] = res_df["mean"] + 1.96 * res_df["sd"]
     if return_obj == "raw":
         return res
     elif return_obj == "point_interval":

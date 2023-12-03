@@ -4,7 +4,7 @@ import os
 import os.path as osp
 from argparse import ArgumentParser
 from itertools import product
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple
 
 import h5py
 import numpy as np
@@ -63,13 +63,15 @@ class Trials:
         ncores: int = 1,
         prevalence: float = 0.05,
         OR: float = 1.25,
-        direction: str = "x->w",
+        direction: Literal["x->w", "w->x"] = "x->w",
+        solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
         self._simulate_kwargs = dict(
             prevalence=prevalence, beta1=np.log(OR), direction=direction
         )
+        self._analysis_kwargs = dict(solver=solver)
         self._name = (
             "prev%.2f-OR%.2f-direct[%s]" % (prevalence, OR, direction)
         ).replace(".", "_")
@@ -103,7 +105,7 @@ class Trials:
                     (sim_i, sim_col),
                     (ana_i, ana_col, ana_ind),
                     (eva_i, eva_col, eva_ind),
-                ) = _pipeline(i, self._simulate_kwargs, {})
+                ) = _pipeline(i, self._simulate_kwargs, self._analysis_kwargs)
                 res_simu.append(sim_i)
                 res_anal.append(ana_i)
                 res_eval.append(eva_i)
@@ -161,6 +163,12 @@ if __name__ == "__main__":
 
     parser.add_argument("--nrepeat", type=int, default=100)
     parser.add_argument("--ncores", type=int, default=12)
+    parser.add_argument(
+        "--solver",
+        type=str,
+        choices=["pymc", "blackjax", "numpyro", "vi"],
+        default="pymc",
+    )
 
     parser.add_argument(
         "--prevalence", type=float, nargs="+", default=[0.05, 0.25, 0.50]
@@ -183,6 +191,7 @@ if __name__ == "__main__":
             prevalence=prev_i,
             OR=or_i,
             direction=args.direction,
+            solver=args.solver,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
