@@ -79,7 +79,7 @@ class Trials:
         )
         self._analysis_kwargs = dict(solver=solver)
         self._name = (
-            "prev%.2f-OR%.2f-direct[%s]-sigma2e%.2f"
+            "prev%.2f-OR%.2f-direct@%s-sigma2e%.2f"
             % (prevalence, OR, direction, sigma2_e)
         ).replace(".", "_")
         self._pytensor_cache = pytensor_cache
@@ -203,6 +203,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
+    parser.add_argument("--sigma2e", type=float, nargs="+", default=[0.1])
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -211,15 +212,18 @@ if __name__ == "__main__":
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
-    for prev_i, or_i in product(args.prevalence, args.OR):
+    for prev_i, or_i, sigma2e_i in product(
+        args.prevalence, args.OR, args.sigma2e
+    ):
         trial_i = Trials(
             nrepeat=args.nrepeat,
             ncores=args.ncores,
-            prevalence=prev_i,
-            OR=or_i,
             direction=args.direction,
             solver=args.solver,
             pytensor_cache="/home/rongzhiwei/.pytensor/",
+            prevalence=prev_i,
+            OR=or_i,
+            sigma2_e=sigma2e_i,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
