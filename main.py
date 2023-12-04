@@ -85,15 +85,28 @@ class Trials:
         self._pytensor_cache = pytensor_cache
 
     def simulate(
-        self, nrepeat: Optional[int] = None
+        self, nrepeat: Optional[int] = None, ncores: Optional[int] = None
     ) -> Tuple[np.ndarray, List[str]]:
+        nrepeat = nrepeat if nrepeat is not None else self._nrepeat
+        ncores = ncores if ncores is not None else self._ncores
         arr = []
-        for i in tqdm(
-            range(nrepeat if nrepeat is not None else self._nrepeat),
-            desc="Simulate %s: " % self._name,
-        ):
-            sim_dat, _ = simulate(seed=i, **self._simulate_kwargs)
-            arr.append(sim_dat.values.astype(float))
+        if ncores <= 1:
+            for i in tqdm(range(nrepeat), desc="Simulate %s: " % self._name):
+                sim_dat, _ = simulate(seed=i, **self._simulate_kwargs)
+                arr.append(sim_dat.values.astype(float))
+        else:
+            with mp.Pool(ncores) as pool:
+                temp_reses = [
+                    pool.apply_async(
+                        simulate, (seedi,), self._simulate_kwargs
+                    )
+                    for seedi in range(nrepeat)
+                ]
+                for temp_resi in tqdm(
+                    temp_reses, desc="Simulate %s: " % self._name
+                ):
+                    sim_dat = temp_resi.get()[0]
+                    arr.append(sim_dat.values.astype(float))
         arr = np.stack(arr, axis=0)
         columns = sim_dat.columns.tolist()
         return arr, columns
