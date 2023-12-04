@@ -240,6 +240,12 @@ if __name__ == "__main__":
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
+            if osp.exists(save_fn):
+                if args.save_action == "raise":
+                    raise FileExistsError(save_fn)
+                elif args.save_action == "ignore":
+                    logger_main.info("%s existed, skip." % save_fn)
+                    continue
             arr, cols = trial_i.simulate()
             with h5py.File(save_fn, "w") as h5:
                 g_sim = h5.create_group("simulate")
