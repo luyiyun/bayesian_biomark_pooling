@@ -15,7 +15,15 @@ from "Statistical methods for biomarker data pooled from multiple nested case-co
 1. 生成$`X_{si}`$，$`W_{si}`$，需要设置参数$`a_s, b_s, \mu_x, \sigma^2_x, \sigma^2_{ws}`$；
 
 $$
-\left(\begin{array}{c}X_{s i} \\ W_{s i} \\ e_{s i}\end{array}\right) \sim \text{MVN}\left(\left(\begin{array}{c}\mu_{x} \\ \left(\mu_{x}-a_{s}\right) / b_{s} \\ 0\end{array}\right),\left(\begin{array}{ccc}\sigma_{x}^{2} & b_{s} \sigma_{w s}^{2} & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2} \\ \cdot & \sigma_{w s}^{2} & 0 \\ \cdot & \cdot & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2}\end{array}\right)\right)
+\left(\begin{array}{c}X_{s i} \\ W_{s i} \\ e_{s i}\end{array}\right)
+\sim \text{MVN}\left(
+    \left(\begin{array}{c}\mu_{x} \\ \left(\mu_{x}-a_{s}\right) / b_{s} \\ 0\end{array}\right),
+    \left(\begin{array}{ccc}
+        \sigma_{x}^{2} & b_{s} \sigma_{w s}^{2} & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2} \\
+        \cdot & \sigma_{w s}^{2} & 0 \\
+        \cdot & \cdot & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2}
+    \end{array}\right)
+\right)
 $$
 
 这等价于以下的过程：
@@ -88,11 +96,11 @@ $$
 4. 每个$`s`$下，移除部分$`X_{si}`$。
 
 ### Experiments
-1. 不同prevalence, 不同OR值下的结果？
-2. 不同的$`\sigma_{es}^2`$大小，如果较大，可能会不符合Sloan' method的假设？
-3. $`X_{si}`$可知的样本比例的影响，特别是如果存在一些studies($`s`$)没有$`X_{si}`$？
-4. 可能存在一种情况：一些studies只有$`X_{si}`$，另一些studies只有$`W_{si}`$？
-5. 如果存在协变量$`Z_{si}`$来影响$`Y_{si}`$，这个协变量同样可能影响$`X_{si}`$或$`W_{si}`$?
-6. 其他的常用情况：不同的OR值($`\beta_x`$)，不同studies样本量的影响，等等。
-7. 不同的几个先验设置的影响？
-8. 使用ADVI和使用MCMC的差别？
+- [x] 使用ADVI和使用MCMC的差别？(使用ADVI估计不准，使用MCMC。)
+- [] 先验不同的影响？
+- [] prevalence不同, OR值不同的影响？
+- [] 样本量的影响？
+- [] 不同的$`\sigma_{es}^2`$大小，如果较大，可能会不符合Sloan' method的假设？
+- [] $`X_{si}`$可知的样本比例的影响，特别是如果存在一些studies($`s`$)没有$`X_{si}`$？
+- [] 可能存在一种情况：一些studies只有$`X_{si}`$，另一些studies只有$`W_{si}`$？
+- [] 如果存在协变量$`Z_{si}`$来影响$`Y_{si}`$，这个协变量同样可能影响$`X_{si}`$或$`W_{si}`$?
