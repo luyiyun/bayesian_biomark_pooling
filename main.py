@@ -151,14 +151,22 @@ class Trials:
 
 
 def summarise_results(
-    arr: np.ndarray, index: Sequence[str], columns: Sequence[str]
+    arr: np.ndarray,
+    index: Sequence[str],
+    columns: Sequence[str],
 ) -> pd.DataFrame:
-    arr_mean, arr_std = arr.mean(axis=0), arr.std(axis=0)
-    res = np.full_like(arr_mean, "", dtype="U25")
-    for i in range(arr_mean.shape[0]):
-        for j in range(arr_mean.shape[1]):
-            res[i, j] = "%.4f±%.4f" % (arr_mean[i, j], arr_std[i, j])
-    return pd.DataFrame(res, index=index, columns=columns)
+    # arr_mean, arr_std = arr.mean(axis=0), arr.std(axis=0)
+    # res = np.full_like(arr_mean, "", dtype="U25")
+    # for i in range(arr_mean.shape[0]):
+    #     for j in range(arr_mean.shape[1]):
+    #         res[i, j] = "%.4f±%.4f" % (arr_mean[i, j], arr_std[i, j])
+    # res = pd.DataFrame(res, index=index, columns=columns)
+    arr_mean = arr.mean(axis=0)
+    res = pd.DataFrame(arr_mean, index=index, columns=columns)
+    res["percent_bias"] = res["percent_bias"] * 100
+    ind_pb = list(columns).index("percent_bias")
+    res["sd_precent_bias"] = arr[..., ind_pb].std(axis=0)
+    return res
 
 
 if __name__ == "__main__":
@@ -169,9 +177,11 @@ if __name__ == "__main__":
         choices=["simulate", "summarize", "all"],
         default="all",
     )
+    parser.add_argument("--save_root", type=str, default="./results/")
     parser.add_argument(
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
+    parser.add_argument("--summarize_save_fn", type=str, default=None)
 
     parser.add_argument("--nrepeat", type=int, default=100)
     parser.add_argument("--ncores", type=int, default=12)
@@ -193,7 +203,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    save_root = "./results/"
+    save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
     for prev_i, or_i in product(args.prevalence, args.OR):
@@ -215,15 +225,27 @@ if __name__ == "__main__":
                 g_sim.create_dataset("values", data=arr)
         elif args.tasks == "summarize":
             res_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
-            with h5py.File(res_fn, "a") as h5:
-                g_eva = h5["evaluate"]
-                print(
-                    summarise_results(
+            if not osp.exists(res_fn):
+                logger_main.info("%s not exists, skip." % res_fn)
+            else:
+                logger_main.info("The results of %s is:" % res_fn)
+                with h5py.File(res_fn, "r") as h5:
+                    g_eva = h5["evaluate"]
+                    summ_df = summarise_results(
                         g_eva["values"][:],
                         g_eva.attrs["index"],
                         g_eva.attrs["columns"],
-                    ),
-                )
+                    )
+                if args.summarize_save_fn is not None:
+                    summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
+                    # sheet name中不能有[]
+                    stname = trial_i._name.replace("[", "@").replace("]", "")
+                    with pd.ExcelWriter(
+                        summ_save_ffn,
+                        mode="a" if osp.exists(summ_save_ffn) else "w",
+                    ) as writer:
+                        summ_df.to_excel(writer, sheet_name=stname)
+                print(summ_df)
         elif args.tasks == "all":
             save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
             if osp.exists(save_fn):

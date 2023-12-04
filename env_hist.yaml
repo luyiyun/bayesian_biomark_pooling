@@ -10,4 +10,5 @@ dependencies:
   - numpyro
   - ca-certificates
   - openssl
+  - openpyxl
 prefix: /home/rongzhiwei/mambaforge/envs/pymc_env2
