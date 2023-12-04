@@ -12,13 +12,14 @@ from "Statistical methods for biomarker data pooled from multiple nested case-co
 
 模型可以简单表示为：$W\rightarrow X\rightarrow Y$
 
-1. 生成$X_{si}$，$W_{si}$，需要设置参数$a_s, b_s, \mu_x, \sigma^2_x, \sigma^2_{ws}$；
+1. 生成$`X_{si}`$，$`W_{si}`$，需要设置参数$`a_s, b_s, \mu_x, \sigma^2_x, \sigma^2_{ws}`$；
 
 $$
 \left(\begin{array}{c}X_{s i} \\ W_{s i} \\ e_{s i}\end{array}\right) \sim \text{MVN}\left(\left(\begin{array}{c}\mu_{x} \\ \left(\mu_{x}-a_{s}\right) / b_{s} \\ 0\end{array}\right),\left(\begin{array}{ccc}\sigma_{x}^{2} & b_{s} \sigma_{w s}^{2} & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2} \\ \cdot & \sigma_{w s}^{2} & 0 \\ \cdot & \cdot & \sigma_{x}^{2}-b_{s}^{2} \sigma_{w s}^{2}\end{array}\right)\right)
 $$
 
 这等价于以下的过程：
+
 $$
 \begin{array}{}
 W_{si}\sim\mathcal{N}(\mu_{ws}, \sigma^2_{ws}) \\
@@ -26,15 +27,20 @@ e_{si}\sim\mathcal{N}(0,\sigma^2_{es}) \\
 X_{si}=a_s+b_sW_{si}+e_{si}
 \end{array}
 $$
-其中$\mu_{ws}=(\mu_x-a_s)/b_s$，$\sigma^2_{es}=\sigma^2_x-b_s^2\sigma^2_{ws}$。
-但是需要注意到，**如果我们通过设置$\sigma^2_{ws}$来计算$\sigma^2_{es}$，容易算出负值。所以我们这里是来设置$\sigma^2_{es}$，进而反推出**$\sigma^2_{ws}$。
+
+其中$`\mu_{ws}=(\mu_x-a_s)/b_s`$，$`\sigma^2_{es}=\sigma^2_x-b_s^2\sigma^2_{ws}`$。
+但是需要注意到，**如果我们通过设置$`\sigma^2_{ws}`$来计算$`\sigma^2_{es}`$，容易算出负值。所以我们这里是来设置$`\sigma^2_{es}`$，进而反推出**$`\sigma^2_{ws}`$。
+
 2. 生成$Y_{si}$，需要参数$\beta_{0s}$，$\beta_x$。
+
 $$
 \text{logit}(P(Y_{si}=1|X_{si}))=\beta_{0s}+\beta_{x}X_{si}
 $$
+
 3. 每个$s$下，移除部分$X_{si}$。
 
 因为相关性没有方向，所以我们也可以转换成X->W的方向。此时，我们可以得到下面的结果：
+
 $$
 \begin{array}{}
 W_{si}|X_{si}\sim\mathcal{N}(A+BX_{si}, C) \\
