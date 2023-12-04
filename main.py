@@ -2,6 +2,7 @@ import logging
 import multiprocessing as mp
 import os
 import os.path as osp
+import shutil
 from argparse import ArgumentParser
 from itertools import product
 from typing import Dict, List, Literal, Optional, Sequence, Tuple
@@ -65,6 +66,7 @@ class Trials:
         OR: float = 1.25,
         direction: Literal["x->w", "w->x"] = "x->w",
         solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
+        pytensor_cache: Optional[str] = None,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -75,6 +77,7 @@ class Trials:
         self._name = (
             "prev%.2f-OR%.2f-direct[%s]" % (prevalence, OR, direction)
         ).replace(".", "_")
+        self._pytensor_cache = pytensor_cache
 
     def simulate(
         self, nrepeat: Optional[int] = None
@@ -110,6 +113,14 @@ class Trials:
                 res_anal.append(ana_i)
                 res_eval.append(eva_i)
         else:
+            # 移除pytensor创建的临时文件，避免多进程时的报错
+            if self._pytensor_cache is not None and osp.exists(
+                self._pytensor_cache
+            ):
+                for fn in os.listdir(self._pytensor_cache):
+                    logger_main.info("remove pytensor cache: %s" % fn)
+                    shutil.rmtree(osp.join(self._pytensor_cache, fn))
+
             with mp.Pool(ncores) as pool:
                 temp_reses = [
                     pool.apply_async(
@@ -128,6 +139,7 @@ class Trials:
                     res_simu.append(sim_i)
                     res_anal.append(ana_i)
                     res_eval.append(eva_i)
+
         res_simu = np.stack(res_simu, axis=0)
         res_anal = np.stack(res_anal, axis=0)
         res_eval = np.stack(res_eval, axis=0)
@@ -192,6 +204,7 @@ if __name__ == "__main__":
             OR=or_i,
             direction=args.direction,
             solver=args.solver,
+            pytensor_cache="/home/rongzhiwei/.pytensor/",
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
@@ -213,6 +226,12 @@ if __name__ == "__main__":
                 )
         elif args.tasks == "all":
             save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
+            if osp.exists(save_fn):
+                if args.save_action == "raise":
+                    raise FileExistsError(save_fn)
+                elif args.save_action == "ignore":
+                    logger_main.info("%s existed, skip." % save_fn)
+                    continue
             (
                 (sim_i, sim_col),
                 (ana_i, ana_col, ana_ind),
