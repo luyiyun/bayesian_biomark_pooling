@@ -62,20 +62,25 @@ class Trials:
         self,
         nrepeat: int,
         ncores: int = 1,
-        prevalence: float = 0.05,
-        OR: float = 1.25,
         direction: Literal["x->w", "w->x"] = "x->w",
         solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
         pytensor_cache: Optional[str] = None,
+        prevalence: float = 0.05,
+        OR: float = 1.25,
+        sigma2_e: float = 0.1,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
         self._simulate_kwargs = dict(
-            prevalence=prevalence, beta1=np.log(OR), direction=direction
+            prevalence=prevalence,
+            beta1=np.log(OR),
+            direction=direction,
+            sigma2_e=sigma2_e,
         )
         self._analysis_kwargs = dict(solver=solver)
         self._name = (
-            "prev%.2f-OR%.2f-direct[%s]" % (prevalence, OR, direction)
+            "prev%.2f-OR%.2f-direct[%s]-sigma2e%.2f"
+            % (prevalence, OR, direction, sigma2_e)
         ).replace(".", "_")
         self._pytensor_cache = pytensor_cache
 
