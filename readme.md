@@ -10,7 +10,7 @@ $$W\leftarrow X\rightarrow Y\leftarrow Z$$
 
 from "Statistical methods for biomarker data pooled from multiple nested case-control studies"。
 
-模型可以简单表示为：$W\rightarrow X\rightarrow Y$
+模型可以简单表示为：$`W\rightarrow X\rightarrow Y`$
 
 1. 生成$`X_{si}`$，$`W_{si}`$，需要设置参数$`a_s, b_s, \mu_x, \sigma^2_x, \sigma^2_{ws}`$；
 
@@ -97,10 +97,10 @@ $$
 
 ### Experiments
 - [x] 使用ADVI和使用MCMC的差别？(使用ADVI估计不准，使用MCMC。)
-- [] 先验不同的影响？
-- [] prevalence不同, OR值不同的影响？
-- [] 样本量的影响？
-- [] 不同的$`\sigma_{es}^2`$大小，如果较大，可能会不符合Sloan' method的假设？
-- [] $`X_{si}`$可知的样本比例的影响，特别是如果存在一些studies($`s`$)没有$`X_{si}`$？
-- [] 可能存在一种情况：一些studies只有$`X_{si}`$，另一些studies只有$`W_{si}`$？
-- [] 如果存在协变量$`Z_{si}`$来影响$`Y_{si}`$，这个协变量同样可能影响$`X_{si}`$或$`W_{si}`$?
+- [ ] 先验不同的影响？
+- [ ] prevalence不同, OR值不同的影响？
+- [ ] 样本量的影响？
+- [ ] 不同的$`\sigma_{es}^2`$大小，如果较大，可能会不符合Sloan' method的假设？
+- [ ] $`X_{si}`$可知的样本比例的影响，特别是如果存在一些studies($`s`$)没有$`X_{si}`$？
+- [ ] 可能存在一种情况：一些studies只有$`X_{si}`$，另一些studies只有$`W_{si}`$？
+- [ ] 如果存在协变量$`Z_{si}`$来影响$`Y_{si}`$，这个协变量同样可能影响$`X_{si}`$或$`W_{si}`$?
