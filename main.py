@@ -203,13 +203,13 @@ if __name__ == "__main__":
     )
     parser.add_argument("--summarize_save_fn", type=str, default=None)
 
-    parser.add_argument("--nrepeat", type=int, default=100)
-    parser.add_argument("--ncores", type=int, default=12)
+    parser.add_argument("--nrepeat", type=int, default=1000)
+    parser.add_argument("--ncores", type=int, default=20)
     parser.add_argument(
         "--solver",
         type=str,
         choices=["pymc", "blackjax", "numpyro", "vi"],
-        default="pymc",
+        default="numpyro",
     )
 
     parser.add_argument(
