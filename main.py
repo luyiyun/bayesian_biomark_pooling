@@ -68,6 +68,7 @@ class Trials:
         prevalence: float = 0.05,
         OR: float = 1.25,
         sigma2_e: float = 0.1,
+        sigma2_x: float = 1.0,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -76,11 +77,12 @@ class Trials:
             beta1=np.log(OR),
             direction=direction,
             sigma2_e=sigma2_e,
+            sigma2_x=sigma2_x
         )
         self._analysis_kwargs = dict(solver=solver)
         self._name = (
-            "prev%.2f-OR%.2f-direct@%s-sigma2e%.2f"
-            % (prevalence, OR, direction, sigma2_e)
+            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
+            % (prevalence, OR, direction, sigma2_e, sigma2_x)
         ).replace(".", "_")
         self._pytensor_cache = pytensor_cache
 
@@ -217,6 +219,7 @@ if __name__ == "__main__":
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
     parser.add_argument("--sigma2e", type=float, nargs="+", default=[0.1])
+    parser.add_argument("--sigma2x", type=float, nargs="+", default=[1.])
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -225,8 +228,8 @@ if __name__ == "__main__":
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
-    for prev_i, or_i, sigma2e_i in product(
-        args.prevalence, args.OR, args.sigma2e
+    for prev_i, or_i, sigma2e_i, sigma2x_i in product(
+        args.prevalence, args.OR, args.sigma2e, args.sigma2x
     ):
         trial_i = Trials(
             nrepeat=args.nrepeat,
@@ -237,6 +240,7 @@ if __name__ == "__main__":
             prevalence=prev_i,
             OR=or_i,
             sigma2_e=sigma2e_i,
+            sigma2_x=sigma2x_i
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
