@@ -6,28 +6,10 @@ import pandas as pd
 import pymc as pm
 
 
-def bayesian_analysis(
-    df: pd.DataFrame,
-    nsample: int = 1000,
-    ntunes: int = 1000,
-    nchains: int = 1,
-    pbar: bool = False,
-    solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
-    return_obj: Literal["raw", "point_interval"] = "point_interval",
-    var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
-    seed: Optional[int] = None,
-) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
-    assert solver in ["pymc", "blackjax", "numpyro", "vi"]
-    assert return_obj in ["raw", "point_interval"]
-
-    mu_x, sigma_x = np.mean(df["X"]), np.std(df["X"])
-    all_s = df["S"].unique()
-    ns = all_s.shape[0]
-    # N_X_no_obs = df["X"].isna().sum()
-
-    with pm.Model():
-        # a = pm.Flat("a")
-        # b = pm.Flat("b")
+def model1(
+    df: pd.DataFrame, ns: int, all_s: np.ndarray, mu_x: float, sigma_x: float
+) -> pm.Model:
+    with pm.Model() as model:
         a = pm.Normal("a", 0, 10)
         b = pm.Normal("b", 0, 10)
 
@@ -37,11 +19,6 @@ def bayesian_analysis(
         sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
         alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 1.0)
         beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 1.0)
-        # sigma_a = pm.HalfFlat("sigma_a")
-        # sigma_b = pm.HalfFlat("sigma_b")
-        # sigma_0 = pm.HalfFlat("sigma_0")
-        # alpha_sigma_w = pm.HalfFlat("alpha_sigma_w")
-        # beta_sigma_w = pm.HalfFlat("beta_sigma_w")
 
         betax = pm.Flat("betax")
 
@@ -51,7 +28,6 @@ def bayesian_analysis(
         sigma_ws = pm.Gamma(
             "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, size=ns
         )
-        # X_no_obs = pm.Normal("X_no_obs", m_x, sigma_x, size=(N_X_no_obs,))
 
         # for samples that can not see X
         for i, si in enumerate(all_s):
@@ -90,6 +66,29 @@ def bayesian_analysis(
                 observed=dfi["Y"].values,
             )
 
+    return model
+
+
+def bayesian_analysis(
+    df: pd.DataFrame,
+    nsample: int = 1000,
+    ntunes: int = 1000,
+    nchains: int = 1,
+    pbar: bool = False,
+    solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
+    return_obj: Literal["raw", "point_interval"] = "point_interval",
+    var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
+    seed: Optional[int] = None,
+) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
+    assert solver in ["pymc", "blackjax", "numpyro", "vi"]
+    assert return_obj in ["raw", "point_interval"]
+
+    mu_x, sigma_x = np.mean(df["X"]), np.std(df["X"])
+    all_s = df["S"].unique()
+    ns = all_s.shape[0]
+
+    model = model1(df, ns, all_s, mu_x, sigma_x)
+    with model:
         if solver != "vi":
             res = pm.sample(
                 nsample,
