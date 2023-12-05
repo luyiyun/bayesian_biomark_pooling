@@ -44,36 +44,52 @@ class Model:
         ns = all_s.shape[0]
 
         with pm.Model() as self._model:
+
+            # alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 0.5)
+            # beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 0.5)
+            # alpha_sigma_w = pm.HalfFlat("alpha_sigma_w")
+            # beta_sigma_w = pm.HalfFlat("beta_sigma_w")
+            mu_sigma_w = pm.HalfFlat("mu_sigma_w")
+            sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
             if self._prior_sigma_ws == "gamma":
-                alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 1.0)
-                beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 1.0)
                 sigma_ws = pm.Gamma(
-                    "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, size=ns
+                    "sigma_ws",
+                    # alpha=alpha_sigma_w,
+                    # beta=beta_sigma_w,
+                    mu=mu_sigma_w,
+                    sigma=sigma_sigma_w,
+                    size=ns
                 )
             elif self._prior_sigma_ws == "inv_gamma":
-                sigma2_ws = pm.InverseGamma("sigma2_ws", alpha=1.0, beta=1.0)
+                sigma2_ws = pm.InverseGamma(
+                    "sigma2_ws",
+                    # alpha=alpha_sigma_w,
+                    # beta=beta_sigma_w,
+                    mu=mu_sigma_w,
+                    sigma=sigma_sigma_w,
+                    size=ns,
+                )
                 sigma_ws = pm.Deterministic(
                     "sigma_ws", pm.math.sqrt(sigma2_ws)
                 )
 
-            a = pm.Normal("a", 0, 10)
-            b = pm.Normal("b", 0, 10)
-
             if self._prior_sigma_ab0 == "half_cauchy":
-                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
+                sigma_a = pm.HalfCauchy("sigma_a", 10.0)
+                sigma_b = pm.HalfCauchy("sigma_b", 10.0)
+                sigma_0 = pm.HalfCauchy("sigma_0", 10.0)
             elif self._prior_sigma_ab0 == "half_flat":
                 sigma_a = pm.HalfFlat("sigma_a")
                 sigma_b = pm.HalfFlat("sigma_b")
                 sigma_0 = pm.HalfFlat("sigma_0")
 
-            beta0 = pm.Flat("beta0")
-            betax = pm.Flat("betax")
-
+            a = pm.Normal("a", 0, 10)
+            b = pm.Normal("b", 0, 10)
             a_s = pm.Normal("a_s", a, sigma_a, size=ns)
             b_s = pm.Normal("b_s", b, sigma_b, size=ns)
+
+            beta0 = pm.Flat("beta0")
             beta0s = pm.Normal("beta0s", beta0, sigma_0, size=ns)
+            betax = pm.Flat("betax")
 
             # for samples that can not see X
             for i, si in enumerate(all_s):

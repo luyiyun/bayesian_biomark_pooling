@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from src.evaluate import evaluate
 from src.method import Model
-from src.simulate import simulate
+from src.simulate import Simulator
 
 # suppress the pymc messages
 logger_pymc = logging.getLogger("pymc")
@@ -35,17 +35,17 @@ logger_main.addHandler(ch)
 
 def _pipeline(
     seed: int,
-    simulate_kwargs: Dict = {},
+    simulator: Simulator,
     analysis_kwargs: Dict = {},
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    sim_dat, true_params = simulate(seed=seed, **simulate_kwargs)
+    sim_dat = simulator.simulate(seed)
     sim_dat["S"] = sim_dat["S"] - 1  # 模拟实验是从1开始的，现在改成0
 
     model = Model(seed=seed, **analysis_kwargs)
     model.fit(sim_dat)
     baye_res = model.summary()
 
-    eval_res = evaluate(true_params, baye_res)
+    eval_res = evaluate(simulator.parameters, baye_res)
     # 使用ndarray和list会提高多线程的效率
     return (
         (sim_dat.values.astype(float), sim_dat.columns.tolist()),
@@ -79,7 +79,7 @@ class Trials:
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
-        self._simulate_kwargs = dict(
+        self._simulator = Simulator(
             prevalence=prevalence,
             beta1=np.log(OR),
             direction=direction,
@@ -129,18 +129,18 @@ class Trials:
             for i in tqdm(
                 range(nrepeat), desc="Simulate %s: " % self._simul_name
             ):
-                sim_dat, _ = simulate(seed=i, **self._simulate_kwargs)
+                sim_dat = self._simulator.simulate(i)
                 arr.append(sim_dat.values.astype(float))
         else:
             with mp.Pool(ncores) as pool:
                 temp_reses = [
-                    pool.apply_async(simulate, (seedi,), self._simulate_kwargs)
+                    pool.apply_async(self._simulator.simulate, (seedi,))
                     for seedi in range(nrepeat)
                 ]
                 for temp_resi in tqdm(
                     temp_reses, desc="Simulate %s: " % self._simul_name
                 ):
-                    sim_dat = temp_resi.get()[0]
+                    sim_dat = temp_resi.get()
                     arr.append(sim_dat.values.astype(float))
         arr = np.stack(arr, axis=0)
         columns = sim_dat.columns.tolist()
@@ -159,7 +159,7 @@ class Trials:
                     (sim_i, sim_col),
                     (ana_i, ana_col, ana_ind),
                     (eva_i, eva_col, eva_ind),
-                ) = _pipeline(i, self._simulate_kwargs, self._analysis_kwargs)
+                ) = _pipeline(i, self._simulator, self._analysis_kwargs)
                 res_simu.append(sim_i)
                 res_anal.append(ana_i)
                 res_eval.append(eva_i)
@@ -175,7 +175,8 @@ class Trials:
             with mp.Pool(ncores) as pool:
                 temp_reses = [
                     pool.apply_async(
-                        _pipeline, (seedi, self._simulate_kwargs, {})
+                        _pipeline,
+                        (seedi, self._simulator, self._analysis_kwargs),
                     )
                     for seedi in range(nrepeat)
                 ]
