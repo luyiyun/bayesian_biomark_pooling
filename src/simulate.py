@@ -33,7 +33,7 @@ def simulate(
     prevalence: Optional[float] = None,
     a: Sequence[float] = [-3, 1, -1, 3],
     b: Sequence[float] = [0.5, 0.75, 1.25, 1.5],
-    sigma2_e: Union[float, Sequence[float]] = 0.1,
+    sigma2_e: Union[float, Sequence[float]] = 1.0,
     beta0: Union[float, Sequence[float]] = 1.0,
     beta1: float = np.log(1.25),
     direction: Literal["x->w", "w->x"] = "x->w",

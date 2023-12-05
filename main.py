@@ -227,7 +227,7 @@ def main():
     parser.add_argument(
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
-    parser.add_argument("--sigma2e", type=float, nargs="+", default=[0.1])
+    parser.add_argument("--sigma2e", type=float, nargs="+", default=[1.0])
     parser.add_argument("--sigma2x", type=float, nargs="+", default=[1.0])
     parser.add_argument(
         "--prior_sigma_ws",
