@@ -126,7 +126,9 @@ class Trials:
         ncores = ncores if ncores is not None else self._ncores
         arr = []
         if ncores <= 1:
-            for i in tqdm(range(nrepeat), desc="Simulate %s: " % self._name):
+            for i in tqdm(
+                range(nrepeat), desc="Simulate %s: " % self._simul_name
+            ):
                 sim_dat, _ = simulate(seed=i, **self._simulate_kwargs)
                 arr.append(sim_dat.values.astype(float))
         else:
@@ -136,7 +138,7 @@ class Trials:
                     for seedi in range(nrepeat)
                 ]
                 for temp_resi in tqdm(
-                    temp_reses, desc="Simulate %s: " % self._name
+                    temp_reses, desc="Simulate %s: " % self._simul_name
                 ):
                     sim_dat = temp_resi.get()[0]
                     arr.append(sim_dat.values.astype(float))
@@ -150,11 +152,9 @@ class Trials:
         nrepeat = nrepeat if nrepeat is not None else self._nrepeat
         ncores = ncores if ncores is not None else self._ncores
         res_simu, res_anal, res_eval = [], [], []
+        logger_main.info("Task name: %s" % self._trial_name)
         if ncores <= 1:
-            for i in tqdm(
-                range(nrepeat),
-                desc="Pipeline %s: " % self._name,
-            ):
+            for i in tqdm(range(nrepeat), desc="Pipeline: "):
                 (
                     (sim_i, sim_col),
                     (ana_i, ana_col, ana_ind),
@@ -179,9 +179,7 @@ class Trials:
                     )
                     for seedi in range(nrepeat)
                 ]
-                for temp_resi in tqdm(
-                    temp_reses, desc="Pipeline %s: " % self._name
-                ):
+                for temp_resi in tqdm(temp_reses, desc="Pipeline: "):
                     (
                         (sim_i, sim_col),
                         (ana_i, ana_col, ana_ind),
