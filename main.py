@@ -263,7 +263,7 @@ def main():
         "--prior_sigma_ab0",
         type=str,
         choices=["half_cauchy", "half_flat"],
-        default="half_cauchy",
+        default="half_flat",
     )
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
