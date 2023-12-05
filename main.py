@@ -75,6 +75,7 @@ class Trials:
         sigma2_e: float = 0.1,
         sigma2_x: float = 1.0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
+        prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -86,12 +87,36 @@ class Trials:
             sigma2_x=sigma2_x,
         )
         self._analysis_kwargs = dict(
-            solver=solver, prior_sigma_ws=prior_sigma_ws
+            solver=solver,
+            prior_sigma_ws=prior_sigma_ws,
+            prior_sigma_ab0=prior_sigma_ab0,
         )
-        self._name = (
-            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f-priorSigmaWs@%s"
-            % (prevalence, OR, direction, sigma2_e, sigma2_x, prior_sigma_ws)
+        self._simul_name = (
+            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
+            % (
+                prevalence,
+                OR,
+                direction,
+                sigma2_e,
+                sigma2_x,
+            )
         ).replace(".", "_")
+        self._trial_name = (
+            (
+                "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
+                "-priorSigmaWs@%s-priorSigmaAB0@%s"
+            )
+            % (
+                prevalence,
+                OR,
+                direction,
+                sigma2_e,
+                sigma2_x,
+                prior_sigma_ws,
+                prior_sigma_ab0,
+            )
+        ).replace(".", "_")
+        self._name = self._trial_name
         self._pytensor_cache = pytensor_cache
 
     def simulate(
@@ -236,6 +261,12 @@ def main():
         default="gamma",
     )
     parser.add_argument(
+        "--prior_sigma_ab0",
+        type=str,
+        choices=["half_cauchy", "half_flat"],
+        default="half_cauchy",
+    )
+    parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
     args = parser.parse_args()
@@ -288,9 +319,12 @@ def main():
             sigma2_e=sigma2e_i,
             sigma2_x=sigma2x_i,
             prior_sigma_ws=args.prior_sigma_ws,
+            prior_sigma_ab0=args.prior_sigma_ab0,
         )
         if args.tasks == "simulate":
-            save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
+            save_fn = osp.join(
+                save_root, "simulate_%s.h5" % trial_i._simul_name
+            )
             if osp.exists(save_fn):
                 if args.save_action == "raise":
                     raise FileExistsError(save_fn)

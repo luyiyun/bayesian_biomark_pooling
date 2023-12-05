@@ -16,9 +16,11 @@ class Model:
         solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
         seed: Optional[int] = None,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
+        prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
     ) -> None:
         assert solver in ["pymc", "blackjax", "numpyro", "vi"]
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
+        assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
 
         self._nsample = nsample
         self._ntunes = ntunes
@@ -27,6 +29,7 @@ class Model:
         self._solver = solver
         self._seed = seed
         self._prior_sigma_ws = prior_sigma_ws
+        self._prior_sigma_ab0 = prior_sigma_ab0
 
     def fit(
         self,
@@ -56,9 +59,14 @@ class Model:
             a = pm.Normal("a", 0, 10)
             b = pm.Normal("b", 0, 10)
 
-            sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-            sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-            sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
+            if self._prior_sigma_ab0 == "half_cauchy":
+                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
+                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
+                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
+            elif self._prior_sigma_ab0 == "half_flat":
+                sigma_a = pm.HalfFlat("sigma_a")
+                sigma_b = pm.HalfFlat("sigma_b")
+                sigma_0 = pm.HalfFlat("sigma_0")
 
             beta0 = pm.Flat("beta0")
             betax = pm.Flat("betax")
