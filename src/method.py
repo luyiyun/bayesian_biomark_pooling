@@ -6,124 +6,158 @@ import pandas as pd
 import pymc as pm
 
 
-def model1(
-    df: pd.DataFrame, ns: int, all_s: np.ndarray, mu_x: float, sigma_x: float
-) -> pm.Model:
-    with pm.Model() as model:
-        a = pm.Normal("a", 0, 10)
-        b = pm.Normal("b", 0, 10)
+class Model:
+    def __init__(
+        self,
+        nsample: int = 1000,
+        ntunes: int = 1000,
+        nchains: int = 1,
+        pbar: bool = False,
+        solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
+        seed: Optional[int] = None,
+        prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
+    ) -> None:
+        assert solver in ["pymc", "blackjax", "numpyro", "vi"]
+        assert prior_sigma_ws in ["gamma", "inv_gamma"]
 
-        beta0 = pm.Flat("beta0")
-        sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-        sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-        sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
-        alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 1.0)
-        beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 1.0)
+        self._nsample = nsample
+        self._ntunes = ntunes
+        self._nchains = nchains
+        self._pbar = pbar
+        self._solver = solver
+        self._seed = seed
+        self._prior_sigma_ws = prior_sigma_ws
 
-        betax = pm.Flat("betax")
+    def fit(
+        self,
+        df: pd.DataFrame,
+        X_col: str = "X",
+        S_col: str = "S",
+        W_col: str = "W",
+        Y_col: str = "Y",
+    ) -> None:
+        mu_x, sigma_x = np.mean(df[X_col]), np.std(df[X_col])
+        all_s = df[S_col].unique()
+        ns = all_s.shape[0]
 
-        a_s = pm.Normal("a_s", a, sigma_a, size=ns)
-        b_s = pm.Normal("b_s", b, sigma_b, size=ns)
-        beta0s = pm.Normal("beta0s", beta0, sigma_0, size=ns)
-        sigma_ws = pm.Gamma(
-            "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, size=ns
-        )
+        with pm.Model() as self._model:
+            if self._prior_sigma_ws == "gamma":
+                alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 1.0)
+                beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 1.0)
+                sigma_ws = pm.Gamma(
+                    "sigma_ws", alpha=alpha_sigma_w, beta=beta_sigma_w, size=ns
+                )
+            elif self._prior_sigma_ws == "inv_gamma":
+                sigma2_ws = pm.InverseGamma("sigma2_ws", alpha=1.0, beta=1.0)
+                sigma_ws = pm.Deterministic(
+                    "sigma_ws", pm.math.sqrt(sigma2_ws)
+                )
 
-        # for samples that can not see X
-        for i, si in enumerate(all_s):
-            dfi = df.loc[(df["S"] == si) & df["X"].isna(), :]
-            if dfi.shape[0] == 0:
-                continue
-            X_no_obs_i = pm.Normal(
-                "X_no_obs_%s" % str(si), mu_x, sigma_x, size=(dfi.shape[0],)
-            )
-            pm.Normal(
-                "W_%s_no_obs_X" % str(si),
-                a_s[i] + b_s[i] * X_no_obs_i,
-                sigma_ws[i],
-                observed=dfi["W"].values,
-            )
-            pm.Bernoulli(
-                "Y_%s_no_obs_X" % str(si),
-                logit_p=beta0s[i] + betax * X_no_obs_i,
-                observed=dfi["Y"].values,
-            )
+            a = pm.Normal("a", 0, 10)
+            b = pm.Normal("b", 0, 10)
 
-        # for samples that can see X
-        for i, si in enumerate(all_s):
-            dfi = df.loc[(df["S"] == si) & df["X"].notna(), :]
-            if dfi.shape[0] == 0:
-                continue
-            pm.Normal(
-                "W_%s_obs_X" % str(si),
-                a_s[i] + b_s[i] * dfi["X"].values,
-                sigma_ws[i],
-                observed=dfi["W"].values,
-            )
-            pm.Bernoulli(
-                "Y_%s_obs_X" % str(si),
-                logit_p=beta0s[i] + betax * dfi["X"].values,
-                observed=dfi["Y"].values,
-            )
+            sigma_a = pm.HalfCauchy("sigma_a", 1.0)
+            sigma_b = pm.HalfCauchy("sigma_b", 1.0)
+            sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
 
-    return model
+            beta0 = pm.Flat("beta0")
+            betax = pm.Flat("betax")
 
+            a_s = pm.Normal("a_s", a, sigma_a, size=ns)
+            b_s = pm.Normal("b_s", b, sigma_b, size=ns)
+            beta0s = pm.Normal("beta0s", beta0, sigma_0, size=ns)
 
-def bayesian_analysis(
-    df: pd.DataFrame,
-    nsample: int = 1000,
-    ntunes: int = 1000,
-    nchains: int = 1,
-    pbar: bool = False,
-    solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
-    return_obj: Literal["raw", "point_interval"] = "point_interval",
-    var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
-    seed: Optional[int] = None,
-) -> Union[pd.DataFrame, az.InferenceData, pm.Approximation]:
-    assert solver in ["pymc", "blackjax", "numpyro", "vi"]
-    assert return_obj in ["raw", "point_interval"]
+            # for samples that can not see X
+            for i, si in enumerate(all_s):
+                dfi = df.loc[(df[S_col] == si) & df[X_col].isna(), :]
+                if dfi.shape[0] == 0:
+                    continue
+                X_no_obs_i = pm.Normal(
+                    "X_no_obs_%s" % str(si),
+                    mu_x,
+                    sigma_x,
+                    size=(dfi.shape[0],),
+                )
+                pm.Normal(
+                    "W_%s_no_obs_X" % str(si),
+                    a_s[i] + b_s[i] * X_no_obs_i,
+                    sigma_ws[i],
+                    observed=dfi[W_col].values,
+                )
+                pm.Bernoulli(
+                    "Y_%s_no_obs_X" % str(si),
+                    logit_p=beta0s[i] + betax * X_no_obs_i,
+                    observed=dfi[Y_col].values,
+                )
 
-    mu_x, sigma_x = np.mean(df["X"]), np.std(df["X"])
-    all_s = df["S"].unique()
-    ns = all_s.shape[0]
+            # for samples that can see X
+            for i, si in enumerate(all_s):
+                dfi = df.loc[(df[S_col] == si) & df[X_col].notna(), :]
+                if dfi.shape[0] == 0:
+                    continue
+                pm.Normal(
+                    "W_%s_obs_X" % str(si),
+                    a_s[i] + b_s[i] * dfi[X_col].values,
+                    sigma_ws[i],
+                    observed=dfi[W_col].values,
+                )
+                pm.Bernoulli(
+                    "Y_%s_obs_X" % str(si),
+                    logit_p=beta0s[i] + betax * dfi[X_col].values,
+                    observed=dfi[Y_col].values,
+                )
 
-    model = model1(df, ns, all_s, mu_x, sigma_x)
-    with model:
-        if solver != "vi":
-            res = pm.sample(
-                nsample,
-                tune=ntunes,
-                chains=nchains,
-                progressbar=pbar,
-                random_seed=list(range(seed, seed + nchains)),
-                nuts_sampler=solver,
-            )
+            if self._solver != "vi":
+                self._res = pm.sample(
+                    self._nsample,
+                    tune=self._ntunes,
+                    chains=self._nchains,
+                    progressbar=self._pbar,
+                    random_seed=list(
+                        range(self._seed, self._seed + self._nchains)
+                    ),
+                    nuts_sampler=self._solver,
+                )
+            elif self._solver == "vi":
+                self._res = pm.fit(
+                    progressbar=self._pbar, random_seed=self._seed
+                )
+
+    def summary(
+        self,
+        var_names: Optional[Tuple[str]] = ("a_s", "b_s", "betax"),
+        return_obj: Literal["raw", "point_interval"] = "point_interval",
+    ) -> Union[pd.DataFrame, az.InferenceData]:
+        assert return_obj in ["raw", "point_interval"]
+        if self._solver != "vi":
             if return_obj == "point_interval":
                 res_df = az.summary(
-                    res, hdi_prob=0.95, kind="stats", var_names=list(var_names)
+                    self._res,
+                    hdi_prob=0.95,
+                    kind="stats",
+                    var_names=list(var_names),
                 )
-        elif solver == "vi":
-            res = pm.fit(progressbar=pbar, random_seed=seed)
+        else:
             if return_obj == "point_interval":
                 # TODO: 有一些param是log__之后的
-                nparam = res.ndim
+                nparam = self._res.ndim
                 param_names = [None] * nparam
                 # log_slices = []
                 if var_names is not None:
-                    post_mu = res.mean.eval()
-                    post_sd = res.std.eval()
+                    post_mu = self._res.mean.eval()
+                    post_sd = self._res.std.eval()
                     res_df = []
                     for vari in var_names:
-                        if vari in res.ordering:
+                        if vari in self._res.ordering:
                             pass
-                        elif (vari + "_log__") in res.ordering:
+                        elif (vari + "_log__") in self._res.ordering:
                             vari = vari + "_log__"
                         else:
                             raise KeyError(
                                 "%s or %s_log__ not in approximation.ordering."
                                 % (vari, vari)
                             )
-                        slice_ = res.ordering[vari][1]
+                        slice_ = self._res.ordering[vari][1]
                         post_mu_i = post_mu[slice_]
                         post_sd_i = post_sd[slice_]
                         n = len(post_mu_i)
@@ -137,7 +171,7 @@ def bayesian_analysis(
                         )
                     res_df = pd.concat(res_df)
                 else:
-                    for param, (_, slice_, _, _) in res.ordering.items():
+                    for param, (_, slice_, _, _) in self._res.ordering.items():
                         if slice_.step is not None:
                             raise NotImplementedError
                         if slice_.start >= nparam:
@@ -155,12 +189,16 @@ def bayesian_analysis(
                         else:
                             param_names[slice_] = [param] * n
                     res_df = pd.DataFrame(
-                        {"mean": res.mean.eval(), "sd": res.std.eval()},
+                        {
+                            "mean": self._res.mean.eval(),
+                            "sd": self._res.std.eval(),
+                        },
                         index=param_names,
                     )
                 res_df["hdi_2.5%"] = res_df["mean"] - 1.96 * res_df["sd"]
                 res_df["hdi_97.5%"] = res_df["mean"] + 1.96 * res_df["sd"]
-    if return_obj == "raw":
-        return res
-    elif return_obj == "point_interval":
-        return res_df
+
+        if return_obj == "raw":
+            return self._res
+        elif return_obj == "point_interval":
+            return res_df

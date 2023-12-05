@@ -18,10 +18,10 @@ def get_beta0_by_prevalence(
             np.inf,
         )[0]
 
-    beta0 = optimize.root_scalar(
+    res = optimize.root_scalar(
         lambda x: p_Y(x, beta1, mu_x, sigma2_x) - prevalence, x0=0.0
-    ).root
-    return beta0
+    )
+    return res.root
 
 
 def simulate(

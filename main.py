@@ -2,6 +2,7 @@ import logging
 import multiprocessing as mp
 import os
 import os.path as osp
+import re
 import shutil
 from argparse import ArgumentParser
 from itertools import product
@@ -13,7 +14,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.evaluate import evaluate
-from src.method import bayesian_analysis
+from src.method import Model
 from src.simulate import simulate
 
 # suppress the pymc messages
@@ -39,7 +40,11 @@ def _pipeline(
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     sim_dat, true_params = simulate(seed=seed, **simulate_kwargs)
     sim_dat["S"] = sim_dat["S"] - 1  # 模拟实验是从1开始的，现在改成0
-    baye_res = bayesian_analysis(sim_dat, seed=seed, **analysis_kwargs)
+
+    model = Model(seed=seed, **analysis_kwargs)
+    model.fit(sim_dat)
+    baye_res = model.summary()
+
     eval_res = evaluate(true_params, baye_res)
     # 使用ndarray和list会提高多线程的效率
     return (
@@ -69,6 +74,7 @@ class Trials:
         OR: float = 1.25,
         sigma2_e: float = 0.1,
         sigma2_x: float = 1.0,
+        prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -77,12 +83,14 @@ class Trials:
             beta1=np.log(OR),
             direction=direction,
             sigma2_e=sigma2_e,
-            sigma2_x=sigma2_x
+            sigma2_x=sigma2_x,
         )
-        self._analysis_kwargs = dict(solver=solver)
+        self._analysis_kwargs = dict(
+            solver=solver, prior_sigma_ws=prior_sigma_ws
+        )
         self._name = (
-            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
-            % (prevalence, OR, direction, sigma2_e, sigma2_x)
+            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f-priorSigmaWs@%s"
+            % (prevalence, OR, direction, sigma2_e, sigma2_x, prior_sigma_ws)
         ).replace(".", "_")
         self._pytensor_cache = pytensor_cache
 
@@ -99,9 +107,7 @@ class Trials:
         else:
             with mp.Pool(ncores) as pool:
                 temp_reses = [
-                    pool.apply_async(
-                        simulate, (seedi,), self._simulate_kwargs
-                    )
+                    pool.apply_async(simulate, (seedi,), self._simulate_kwargs)
                     for seedi in range(nrepeat)
                 ]
                 for temp_resi in tqdm(
@@ -185,11 +191,13 @@ def summarise_results(
     res = pd.DataFrame(arr_mean, index=index, columns=columns)
     res["percent_bias"] = res["percent_bias"] * 100
     ind_pb = list(columns).index("percent_bias")
-    res["sd_precent_bias"] = arr[..., ind_pb].std(axis=0)
+    res["se_precent_bias"] = arr[..., ind_pb].std(axis=0) / np.sqrt(
+        arr.shape[0]
+    )
     return res
 
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser()
     parser.add_argument(
         "--tasks",
@@ -202,6 +210,7 @@ if __name__ == "__main__":
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
     parser.add_argument("--summarize_save_fn", type=str, default=None)
+    parser.add_argument("--summarize_target_pattern", type=str, default=None)
 
     parser.add_argument("--nrepeat", type=int, default=1000)
     parser.add_argument("--ncores", type=int, default=20)
@@ -219,7 +228,13 @@ if __name__ == "__main__":
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
     parser.add_argument("--sigma2e", type=float, nargs="+", default=[0.1])
-    parser.add_argument("--sigma2x", type=float, nargs="+", default=[1.])
+    parser.add_argument("--sigma2x", type=float, nargs="+", default=[1.0])
+    parser.add_argument(
+        "--prior_sigma_ws",
+        type=str,
+        choices=["gamma", "inv_gamma"],
+        default="gamma",
+    )
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -227,6 +242,37 @@ if __name__ == "__main__":
 
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
+
+    if args.summarize_target_pattern is not None:
+        # 依靠pattern来找到要print的结果，而非通过指定的参数
+        # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
+        pattern = re.compile(re.escape(args.summarize_target_pattern))
+        for fn in os.listdir(save_root):
+            if fn.startswith("pipeline_") and fn.endswith(".h5"):
+                search_res = pattern.search(fn)
+                if search_res:
+                    res_fn = osp.join(save_root, fn)
+                    logger_main.info("The results of %s is:" % res_fn)
+                    with h5py.File(res_fn, "r") as h5:
+                        g_eva = h5["evaluate"]
+                        summ_df = summarise_results(
+                            g_eva["values"][:],
+                            g_eva.attrs["index"],
+                            g_eva.attrs["columns"],
+                        )
+                    if args.summarize_save_fn is not None:
+                        summ_save_ffn = osp.join(
+                            save_root, args.summarize_save_fn
+                        )
+                        # sheet name中不能有[]
+                        stname = fn[9:-3].replace("[", "@").replace("]", "")
+                        with pd.ExcelWriter(
+                            summ_save_ffn,
+                            mode="a" if osp.exists(summ_save_ffn) else "w",
+                        ) as writer:
+                            summ_df.to_excel(writer, sheet_name=stname)
+                    print(summ_df)
+        return
 
     for prev_i, or_i, sigma2e_i, sigma2x_i in product(
         args.prevalence, args.OR, args.sigma2e, args.sigma2x
@@ -240,7 +286,8 @@ if __name__ == "__main__":
             prevalence=prev_i,
             OR=or_i,
             sigma2_e=sigma2e_i,
-            sigma2_x=sigma2x_i
+            sigma2_x=sigma2x_i,
+            prior_sigma_ws=args.prior_sigma_ws,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(save_root, "simulate_%s.h5" % trial_i._name)
@@ -304,3 +351,7 @@ if __name__ == "__main__":
                 g_eva.attrs["index"] = eva_ind
                 g_eva.create_dataset("values", data=eva_i)
             print(summarise_results(eva_i, eva_ind, eva_col))
+
+
+if __name__ == "__main__":
+    main()
