@@ -13,12 +13,14 @@ class Model:
         ntunes: int = 1000,
         nchains: int = 1,
         pbar: bool = False,
-        solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
+        solver: Literal[
+            "pymc", "blackjax", "numpyro", "nutpie", "vi"
+        ] = "pymc",
         seed: Optional[int] = None,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
     ) -> None:
-        assert solver in ["pymc", "blackjax", "numpyro", "vi"]
+        assert solver in ["pymc", "blackjax", "numpyro", "nutpie", "vi"]
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
         assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
 
@@ -44,7 +46,6 @@ class Model:
         ns = all_s.shape[0]
 
         with pm.Model() as self._model:
-
             # alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 0.5)
             # beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 0.5)
             # alpha_sigma_w = pm.HalfFlat("alpha_sigma_w")
@@ -58,7 +59,7 @@ class Model:
                     # beta=beta_sigma_w,
                     mu=mu_sigma_w,
                     sigma=sigma_sigma_w,
-                    size=ns
+                    size=ns,
                 )
             elif self._prior_sigma_ws == "inv_gamma":
                 sigma2_ws = pm.InverseGamma(

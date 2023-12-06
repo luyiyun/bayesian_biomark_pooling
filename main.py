@@ -68,7 +68,9 @@ class Trials:
         nrepeat: int,
         ncores: int = 1,
         direction: Literal["x->w", "w->x"] = "x->w",
-        solver: Literal["pymc", "blackjax", "numpyro", "vi"] = "pymc",
+        solver: Literal[
+            "pymc", "blackjax", "numpyro", "nutpie", "vi"
+        ] = "pymc",
         pytensor_cache: Optional[str] = None,
         prevalence: float = 0.05,
         OR: float = 1.25,
@@ -241,7 +243,7 @@ def main():
     parser.add_argument(
         "--solver",
         type=str,
-        choices=["pymc", "blackjax", "numpyro", "vi"],
+        choices=["pymc", "blackjax", "numpyro", "nutpie", "vi"],
         default="numpyro",
     )
 
