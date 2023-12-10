@@ -6,7 +6,7 @@ import re
 import shutil
 from argparse import ArgumentParser
 from itertools import product
-from typing import Dict, List, Literal, Optional, Sequence, Tuple
+from typing import Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 import h5py
 import numpy as np
@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from src.evaluate import evaluate
 from src.method import Model
-from src.simulate import Simulator
+from src.simulate import Simulator2
 
 # suppress the pymc messages
 logger_pymc = logging.getLogger("pymc")
@@ -35,7 +35,7 @@ logger_main.addHandler(ch)
 
 def _pipeline(
     seed: int,
-    simulator: Simulator,
+    simulator: Simulator2,
     analysis_kwargs: Dict = {},
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     sim_dat = simulator.simulate(seed)
@@ -74,45 +74,40 @@ class Trials:
         pytensor_cache: Optional[str] = None,
         prevalence: float = 0.05,
         OR: float = 1.25,
-        sigma2_e: float = 0.1,
-        sigma2_x: float = 1.0,
+        sigma2_e: Union[float, Sequence[float]] = 0.1,
+        sigma2_x: Union[float, Sequence[float]] = 1.0,
+        a: Union[float, Sequence[float]] = [-3, 1, -1, 3],
+        b: Union[float, Sequence[float]] = [0.5, 0.75, 1.25, 1.5],
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
-        self._simulator = Simulator(
+        self._simulator = Simulator2(
             prevalence=prevalence,
-            beta1=np.log(OR),
+            OR=OR,
             direction=direction,
             sigma2_e=sigma2_e,
             sigma2_x=sigma2_x,
+            a=a,
+            b=b,
         )
         self._analysis_kwargs = dict(
             solver=solver,
             prior_sigma_ws=prior_sigma_ws,
             prior_sigma_ab0=prior_sigma_ab0,
         )
-        self._simul_name = (
-            "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
-            % (
-                prevalence,
-                OR,
-                direction,
-                sigma2_e,
-                sigma2_x,
-            )
-        ).replace(".", "_")
+        self._simul_name = self._simulator.name
         self._trial_name = (
             (
-                "prev%.2f-OR%.2f-direct@%s-sigma2e%.1f-sigma2x%.1f"
+                "prev%.2f-OR%.2f-direct@%s-sigma2x%.1f"
                 "-priorSigmaWs@%s-priorSigmaAB0@%s"
             )
             % (
                 prevalence,
                 OR,
                 direction,
-                sigma2_e,
+                # sigma2_e,
                 sigma2_x,
                 prior_sigma_ws,
                 prior_sigma_ab0,
@@ -244,7 +239,7 @@ def main():
         "--solver",
         type=str,
         choices=["pymc", "blackjax", "numpyro", "nutpie", "vi"],
-        default="numpyro",
+        default="pymc",
     )
 
     parser.add_argument(
@@ -253,8 +248,12 @@ def main():
     parser.add_argument(
         "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
     )
+    parser.add_argument("--sigma2x", type=float, default=1.0)
     parser.add_argument("--sigma2e", type=float, nargs="+", default=[1.0])
-    parser.add_argument("--sigma2x", type=float, nargs="+", default=[1.0])
+    parser.add_argument("--a", type=float, nargs="+", default=[-3, 1, -1, 3])
+    parser.add_argument(
+        "--b", type=float, nargs="+", default=[0.5, 0.75, 1.25, 1.5]
+    )
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
@@ -274,6 +273,15 @@ def main():
 
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
+
+    # 这些参数的长度需要保持一致或者是scalar
+    n_studies = None
+    for arg_i in [args.a, args.b, args.sigma2e]:
+        if len(arg_i) != 1:
+            if n_studies is None:
+                n_studies = len(arg_i)
+            else:
+                assert len(arg_i) == n_studies
 
     if args.summarize_target_pattern is not None:
         # 依靠pattern来找到要print的结果，而非通过指定的参数
@@ -306,9 +314,7 @@ def main():
                     print(summ_df)
         return
 
-    for prev_i, or_i, sigma2e_i, sigma2x_i in product(
-        args.prevalence, args.OR, args.sigma2e, args.sigma2x
-    ):
+    for prev_i, or_i in product(args.prevalence, args.OR):
         trial_i = Trials(
             nrepeat=args.nrepeat,
             ncores=args.ncores,
@@ -317,8 +323,12 @@ def main():
             pytensor_cache="/home/rongzhiwei/.pytensor/",
             prevalence=prev_i,
             OR=or_i,
-            sigma2_e=sigma2e_i,
-            sigma2_x=sigma2x_i,
+            sigma2_e=(
+                args.sigma2e[0] if len(args.sigma2e) == 1 else args.sigma2e
+            ),
+            sigma2_x=args.sigma2x,
+            a=args.a,
+            b=args.b,
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
         )

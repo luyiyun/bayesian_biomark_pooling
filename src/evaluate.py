@@ -8,17 +8,23 @@ def evaluate(
     true_params: Dict[str, Union[float, Sequence[float]]],
     estimate_params: pd.DataFrame,
     interval_columns: Tuple[str, str] = ("hdi_2.5%", "hdi_97.5%"),
+    name_pairs: Sequence[Tuple[str, str]] = (
+        ("beta1", "betax"),
+        ("a", "a_s"),
+        ("b", "b_s"),
+    ),
 ) -> pd.DataFrame:
     index, true_arr = [], []
-    for k, v in true_params.items():
+    for k_tp, k_ep in name_pairs:
+        v = true_params[k_tp]
         if isinstance(v, np.ndarray) and v.ndim == 0:
-            index.append(k)
+            index.append(k_ep)
             true_arr.append(v.item())
         elif isinstance(v, (float, int)):
-            index.append(k)
+            index.append(k_ep)
             true_arr.append(v)
         elif isinstance(v, (list, tuple, np.ndarray)):
-            index.extend(["%s[%d]" % (k, i) for i in range(len(v))])
+            index.extend(["%s[%d]" % (k_ep, i) for i in range(len(v))])
             true_arr.extend(list(v))
         else:
             raise TypeError
