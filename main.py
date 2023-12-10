@@ -80,6 +80,8 @@ class Trials:
         b: Union[float, Sequence[float]] = [0.5, 0.75, 1.25, 1.5],
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
+        n_sample_per_studies: Union[int, Sequence[int]] = 1000,
+        n_knowX_per_studies: Union[int, Sequence[int]] = 100,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -91,6 +93,8 @@ class Trials:
             sigma2_x=sigma2_x,
             a=a,
             b=b,
+            n_sample_per_studies=n_sample_per_studies,
+            n_knowX_per_studies=n_knowX_per_studies,
         )
         self._analysis_kwargs = dict(
             solver=solver,
@@ -254,6 +258,8 @@ def main():
     parser.add_argument(
         "--b", type=float, nargs="+", default=[0.5, 0.75, 1.25, 1.5]
     )
+    parser.add_argument("--nSamples", type=float, nargs="+", default=[1000])
+    parser.add_argument("--nKnowX", type=float, nargs="+", default=[100])
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
@@ -329,6 +335,12 @@ def main():
             sigma2_x=args.sigma2x,
             a=args.a,
             b=args.b,
+            n_sample_per_studies=(
+                args.nSamples[0] if len(args.nSamples) == 1 else args.nSamples
+            ),
+            n_knowX_per_studies=(
+                args.nKnowX[0] if len(args.nKnowX) == 1 else args.nKnowX
+            ),
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
         )

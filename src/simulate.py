@@ -264,7 +264,9 @@ class Simulator2:
     def simulate(self, seed: int):
         rng = np.random.default_rng(seed)
 
-        Ns = self._parameters["n_sample_per_studies"]
+        Ns = self._parameters["n_sample_per_studies"].astype(int)
+        nKnowX = self._parameters["n_knowX_per_studies"].astype(int)
+
         a = np.repeat(self._parameters["a"], Ns)
         b = np.repeat(self._parameters["b"], Ns)
         sigma_e = np.repeat(self._parameters["sigma_e"], Ns)
@@ -289,12 +291,15 @@ class Simulator2:
 
         X_obs = X.copy()
         start = 0
-        for ni, nxi in zip(Ns, self._parameters["n_knowX_per_studies"]):
+        for ni, nxi in zip(Ns, nKnowX):
             end = start + ni
-            nan_ind = rng.choice(
-                np.arange(start, end), ni - nxi, replace=False
-            )
-            X_obs[nan_ind] = np.NaN
+            if ni < nxi:
+                raise ValueError("nsamples(%d) < nKnowX(%d)" % (ni, nxi))
+            elif ni > nxi:
+                nan_ind = rng.choice(
+                    np.arange(start, end), ni - nxi, replace=False
+                )
+                X_obs[nan_ind] = np.NaN
             start = end
 
         res = pd.DataFrame(
