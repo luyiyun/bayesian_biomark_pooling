@@ -264,8 +264,8 @@ class Simulator2:
     def simulate(self, seed: int):
         rng = np.random.default_rng(seed)
 
-        Ns = self._parameters["n_sample_per_studies"].astype(int)
-        nKnowX = self._parameters["n_knowX_per_studies"].astype(int)
+        Ns = self._parameters["n_sample_per_studies"]
+        nKnowX = self._parameters["n_knowX_per_studies"]
 
         a = np.repeat(self._parameters["a"], Ns)
         b = np.repeat(self._parameters["b"], Ns)

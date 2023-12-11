@@ -258,8 +258,8 @@ def main():
     parser.add_argument(
         "--b", type=float, nargs="+", default=[0.5, 0.75, 1.25, 1.5]
     )
-    parser.add_argument("--nSamples", type=float, nargs="+", default=[1000])
-    parser.add_argument("--nKnowX", type=float, nargs="+", default=[100])
+    parser.add_argument("--nSamples", type=int, nargs="+", default=[1000])
+    parser.add_argument("--nKnowX", type=int, nargs="+", default=[100])
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
