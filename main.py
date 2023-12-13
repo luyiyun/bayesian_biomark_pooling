@@ -66,6 +66,8 @@ class Trials:
     def __init__(
         self,
         nrepeat: int,
+        ndraws: int = 1000,
+        ntunes: int = 1000,
         ncores: int = 1,
         direction: Literal["x->w", "w->x"] = "x->w",
         solver: Literal[
@@ -82,6 +84,7 @@ class Trials:
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
+        use_hier_x_prior: bool = True,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
@@ -100,6 +103,9 @@ class Trials:
             solver=solver,
             prior_sigma_ws=prior_sigma_ws,
             prior_sigma_ab0=prior_sigma_ab0,
+            nsample=ndraws,
+            ntunes=ntunes,
+            hier_prior_on_x=use_hier_x_prior,
         )
         self._simul_name = self._simulator.name
         self._trial_name = (
@@ -237,8 +243,8 @@ def main():
     parser.add_argument("--summarize_save_fn", type=str, default=None)
     parser.add_argument("--summarize_target_pattern", type=str, default=None)
 
-    parser.add_argument("--nrepeat", type=int, default=1000)
-    parser.add_argument("--ncores", type=int, default=20)
+    parser.add_argument("--nrepeat", type=int, default=10)
+    parser.add_argument("--ncores", type=int, default=1)
     parser.add_argument(
         "--solver",
         type=str,
@@ -270,8 +276,9 @@ def main():
         "--prior_sigma_ab0",
         type=str,
         choices=["half_cauchy", "half_flat"],
-        default="half_flat",
+        default="half_cauchy",
     )
+    parser.add_argument("--use_hier_x_prior", action="store_true")
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -322,11 +329,13 @@ def main():
 
     for prev_i, or_i in product(args.prevalence, args.OR):
         trial_i = Trials(
+            ndraws=1000,
+            ntunes=1000,
             nrepeat=args.nrepeat,
             ncores=args.ncores,
             direction=args.direction,
             solver=args.solver,
-            pytensor_cache="/home/rongzhiwei/.pytensor/",
+            pytensor_cache=osp.expanduser("~/.pytensor/"),
             prevalence=prev_i,
             OR=or_i,
             sigma2_e=(
@@ -343,6 +352,7 @@ def main():
             ),
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
+            use_hier_x_prior=args.use_hier_x_prior
         )
         if args.tasks == "simulate":
             save_fn = osp.join(

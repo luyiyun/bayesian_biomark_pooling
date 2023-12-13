@@ -19,6 +19,7 @@ class Model:
         seed: Optional[int] = None,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
+        hier_prior_on_x: bool = True
     ) -> None:
         assert solver in ["pymc", "blackjax", "numpyro", "nutpie", "vi"]
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
@@ -32,6 +33,7 @@ class Model:
         self._seed = seed
         self._prior_sigma_ws = prior_sigma_ws
         self._prior_sigma_ab0 = prior_sigma_ab0
+        self._hier_prior_on_x = hier_prior_on_x
 
     def fit(
         self,
@@ -41,22 +43,20 @@ class Model:
         W_col: str = "W",
         Y_col: str = "Y",
     ) -> None:
-        mu_x, sigma_x = np.mean(df[X_col]), np.std(df[X_col])
+        if not self._hier_prior_on_x:
+            mu_x, sigma_x = np.mean(df[X_col]), np.std(df[X_col])
         all_s = df[S_col].unique()
         ns = all_s.shape[0]
+        ind_xKnow = df[X_col].notna()
+        ind_xUnKnow = df[X_col].isna()
 
         with pm.Model() as self._model:
-            # alpha_sigma_w = pm.HalfCauchy("alpha_sigma_w", 0.5)
-            # beta_sigma_w = pm.HalfCauchy("beta_sigma_w", 0.5)
-            # alpha_sigma_w = pm.HalfFlat("alpha_sigma_w")
-            # beta_sigma_w = pm.HalfFlat("beta_sigma_w")
-            mu_sigma_w = pm.HalfFlat("mu_sigma_w")
+            # mu_sigma_w = pm.HalfFlat("mu_sigma_w")
+            mu_sigma_w = pm.HalfCauchy("mu_sigma_w", 1.0)
             sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
             if self._prior_sigma_ws == "gamma":
                 sigma_ws = pm.Gamma(
                     "sigma_ws",
-                    # alpha=alpha_sigma_w,
-                    # beta=beta_sigma_w,
                     mu=mu_sigma_w,
                     sigma=sigma_sigma_w,
                     size=ns,
@@ -64,8 +64,6 @@ class Model:
             elif self._prior_sigma_ws == "inv_gamma":
                 sigma2_ws = pm.InverseGamma(
                     "sigma2_ws",
-                    # alpha=alpha_sigma_w,
-                    # beta=beta_sigma_w,
                     mu=mu_sigma_w,
                     sigma=sigma_sigma_w,
                     size=ns,
@@ -75,13 +73,16 @@ class Model:
                 )
 
             if self._prior_sigma_ab0 == "half_cauchy":
-                sigma_a = pm.HalfCauchy("sigma_a", 10.0)
-                sigma_b = pm.HalfCauchy("sigma_b", 10.0)
-                sigma_0 = pm.HalfCauchy("sigma_0", 10.0)
+                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
+                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
+                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
             elif self._prior_sigma_ab0 == "half_flat":
                 sigma_a = pm.HalfFlat("sigma_a")
                 sigma_b = pm.HalfFlat("sigma_b")
                 sigma_0 = pm.HalfFlat("sigma_0")
+            if self._hier_prior_on_x:
+                mu_x = pm.Normal("mu_x", 0, 10)
+                sigma_x = pm.HalfCauchy("sigma_x", 1.0)
 
             a = pm.Normal("a", 0, 10)
             b = pm.Normal("b", 0, 10)
@@ -93,16 +94,19 @@ class Model:
             betax = pm.Flat("betax")
 
             # for samples that can not see X
+            X_no_obs = pm.Normal(
+                "X_no_obs",
+                mu_x,
+                sigma_x,
+                size=(ind_xUnKnow.sum(),),
+            )
+            start = 0
             for i, si in enumerate(all_s):
-                dfi = df.loc[(df[S_col] == si) & df[X_col].isna(), :]
+                dfi = df.loc[(df[S_col] == si) & (~ind_xUnKnow), :]
                 if dfi.shape[0] == 0:
                     continue
-                X_no_obs_i = pm.Normal(
-                    "X_no_obs_%s" % str(si),
-                    mu_x,
-                    sigma_x,
-                    size=(dfi.shape[0],),
-                )
+                end = start + dfi.shape[0]
+                X_no_obs_i = X_no_obs[start:end]
                 pm.Normal(
                     "W_%s_no_obs_X" % str(si),
                     a_s[i] + b_s[i] * X_no_obs_i,
@@ -114,10 +118,18 @@ class Model:
                     logit_p=beta0s[i] + betax * X_no_obs_i,
                     observed=dfi[Y_col].values,
                 )
+                start = end
 
             # for samples that can see X
+            if self._hier_prior_on_x:
+                pm.Normal(
+                    "X_obs",
+                    mu_x,
+                    sigma_x,
+                    observed=df.loc[ind_xKnow, X_col].values,
+                )
             for i, si in enumerate(all_s):
-                dfi = df.loc[(df[S_col] == si) & df[X_col].notna(), :]
+                dfi = df.loc[(df[S_col] == si) & ind_xKnow, :]
                 if dfi.shape[0] == 0:
                     continue
                 pm.Normal(
