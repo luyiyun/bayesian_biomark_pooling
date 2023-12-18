@@ -1,9 +1,8 @@
-from typing import Literal, Optional, Tuple, Union
-
-import arviz as az
+from typing import Literal, Optional, Tuple, Union, List
 import numpy as np
 import pandas as pd
 import pymc as pm
+import arviz as az
 
 
 class Model:
@@ -16,10 +15,10 @@ class Model:
         solver: Literal[
             "pymc", "blackjax", "numpyro", "nutpie", "vi"
         ] = "pymc",
-        seed: Optional[int] = None,
+        seed: int = 0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-        hier_prior_on_x: bool = True
+        hier_prior_on_x: bool = True,
     ) -> None:
         assert solver in ["pymc", "blackjax", "numpyro", "nutpie", "vi"]
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
@@ -35,6 +34,17 @@ class Model:
         self._prior_sigma_ab0 = prior_sigma_ab0
         self._hier_prior_on_x = hier_prior_on_x
 
+    def _create_model(
+        self,
+        n_studies: int,
+        n_xKnow: int,
+        n_xUnKnow: int,
+        X_Know: np.ndarray,
+        XWY_xKnow: List[Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]],
+        WY_xUnKnow: List[Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]],
+    ) -> pm.Model:
+        raise NotImplementedError
+
     def fit(
         self,
         df: pd.DataFrame,
@@ -44,111 +54,44 @@ class Model:
         Y_col: str = "Y",
     ) -> None:
         if not self._hier_prior_on_x:
-            mu_x, sigma_x = np.mean(df[X_col]), np.std(df[X_col])
-        all_s = df[S_col].unique()
-        ns = all_s.shape[0]
+            self._mu_x, self._sigma_x = np.mean(df[X_col]), np.std(df[X_col])
+
+        # 把dataframe都处理好后送入create_model方法来创建pm.Model
+        ind_studies = df[S_col].unique()
         ind_xKnow = df[X_col].notna()
         ind_xUnKnow = df[X_col].isna()
+        n_studies = int(ind_studies.shape[0])
+        n_xKnow = int(ind_xKnow.sum())
+        n_xUnKnow = int(ind_xUnKnow.sum())
 
-        with pm.Model() as self._model:
-            # mu_sigma_w = pm.HalfFlat("mu_sigma_w")
-            mu_sigma_w = pm.HalfCauchy("mu_sigma_w", 1.0)
-            sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
-            if self._prior_sigma_ws == "gamma":
-                sigma_ws = pm.Gamma(
-                    "sigma_ws",
-                    mu=mu_sigma_w,
-                    sigma=sigma_sigma_w,
-                    size=ns,
-                )
-            elif self._prior_sigma_ws == "inv_gamma":
-                sigma2_ws = pm.InverseGamma(
-                    "sigma2_ws",
-                    mu=mu_sigma_w,
-                    sigma=sigma_sigma_w,
-                    size=ns,
-                )
-                sigma_ws = pm.Deterministic(
-                    "sigma_ws", pm.math.sqrt(sigma2_ws)
-                )
+        X_Know = df.loc[ind_xKnow, X_col].values
 
-            if self._prior_sigma_ab0 == "half_cauchy":
-                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
-            elif self._prior_sigma_ab0 == "half_flat":
-                sigma_a = pm.HalfFlat("sigma_a")
-                sigma_b = pm.HalfFlat("sigma_b")
-                sigma_0 = pm.HalfFlat("sigma_0")
-            if self._hier_prior_on_x:
-                mu_x = pm.Normal("mu_x", 0, 10)
-                sigma_x = pm.HalfCauchy("sigma_x", 1.0)
-
-            a = pm.Normal("a", 0, 10)
-            b = pm.Normal("b", 0, 10)
-            a_s = pm.Normal("a_s", a, sigma_a, size=ns)
-            b_s = pm.Normal("b_s", b, sigma_b, size=ns)
-
-            beta0 = pm.Flat("beta0")
-            beta0s = pm.Normal("beta0s", beta0, sigma_0, size=ns)
-            betax = pm.Flat("betax")
-
-            # for samples that can not see X
-            X_no_obs = pm.Normal(
-                "X_no_obs",
-                mu_x,
-                sigma_x,
-                size=(ind_xUnKnow.sum(),),
-            )
-            start = 0
-            for i, si in enumerate(all_s):
-                dfi = df.loc[(df[S_col] == si) & (~ind_xUnKnow), :]
-                if dfi.shape[0] == 0:
-                    continue
-                end = start + dfi.shape[0]
-                X_no_obs_i = X_no_obs[start:end]
-                pm.Normal(
-                    "W_%s_no_obs_X" % str(si),
-                    a_s[i] + b_s[i] * X_no_obs_i,
-                    sigma_ws[i],
-                    observed=dfi[W_col].values,
+        XWY_xKnow, WY_xUnKnow = [], []
+        for si in ind_studies:
+            dfi = df.loc[(df[S_col] == si) & (ind_xKnow), :]
+            if dfi.shape[0] == 0:
+                XWY_xKnow.append(None)
+            else:
+                XWY_xKnow.append(
+                    (dfi[X_col].values, dfi[W_col].values, dfi[Y_col].values)
                 )
-                pm.Bernoulli(
-                    "Y_%s_no_obs_X" % str(si),
-                    logit_p=beta0s[i] + betax * X_no_obs_i,
-                    observed=dfi[Y_col].values,
-                )
-                start = end
+            dfi = df.loc[(df[S_col] == si) & (ind_xUnKnow), :]
+            if dfi.shape[0] == 0:
+                WY_xUnKnow.append(None)
+            else:
+                WY_xUnKnow.append((dfi[W_col].values, dfi[Y_col].values))
 
-            # for samples that can see X
-            if self._hier_prior_on_x:
-                pm.Normal(
-                    "X_obs",
-                    mu_x,
-                    sigma_x,
-                    observed=df.loc[ind_xKnow, X_col].values,
-                )
-            for i, si in enumerate(all_s):
-                dfi = df.loc[(df[S_col] == si) & ind_xKnow, :]
-                if dfi.shape[0] == 0:
-                    continue
-                pm.Normal(
-                    "W_%s_obs_X" % str(si),
-                    a_s[i] + b_s[i] * dfi[X_col].values,
-                    sigma_ws[i],
-                    observed=dfi[W_col].values,
-                )
-                pm.Bernoulli(
-                    "Y_%s_obs_X" % str(si),
-                    logit_p=beta0s[i] + betax * dfi[X_col].values,
-                    observed=dfi[Y_col].values,
-                )
+        self._model = self._create_model(
+            n_studies, n_xKnow, n_xUnKnow, X_Know, XWY_xKnow, WY_xUnKnow
+        )
 
+        with self._model:
             if self._solver != "vi":
                 self._res = pm.sample(
                     self._nsample,
                     tune=self._ntunes,
                     chains=self._nchains,
+                    cores=self._nchains,
                     progressbar=self._pbar,
                     random_seed=list(
                         range(self._seed, self._seed + self._nchains)
@@ -239,3 +182,156 @@ class Model:
             return self._res
         elif return_obj == "point_interval":
             return res_df
+
+
+class ModelwLikelihood(Model):
+    def _set_prior(
+        self,
+        n_studies: int,
+        n_xKnow: int,
+        n_xUnKnow: int,
+        X_Know: np.ndarray,
+    ) -> Tuple[Union[pm.Distribution, np.ndarray]]:
+        raise NotImplementedError
+
+    def _create_model(
+        self,
+        n_studies: int,
+        n_xKnow: int,
+        n_xUnKnow: int,
+        X_Know: np.ndarray,
+        XWY_xKnow: List[Tuple[np.ndarray, np.ndarray, np.ndarray] | None],
+        WY_xUnKnow: List[Tuple[np.ndarray, np.ndarray, np.ndarray] | None],
+    ) -> Model:
+        with pm.Model() as model:
+            (
+                mu_x,
+                sigma_x,
+                a_s,
+                b_s,
+                sigma_ws,
+                beta0s,
+                betax,
+            ) = self._set_prior(n_studies, n_xKnow, n_xUnKnow, X_Know)
+
+            if beta0s.ndim == 0:
+                beta0s = [beta0s] * n_studies
+            if sigma_ws.ndim == 0:
+                sigma_ws = [sigma_ws] * n_studies
+
+            # for samples that can not see X
+            X_no_obs = pm.Normal(
+                "X_no_obs",
+                mu_x,
+                sigma_x,
+                size=n_xUnKnow,
+            )
+            start = 0
+            for i, WY in enumerate(WY_xUnKnow):
+                if WY is None:
+                    continue
+                W, Y = WY
+                end = start + W.shape[0]
+                X_no_obs_i = X_no_obs[start:end]
+                pm.Normal(
+                    "W_%d_no_obs_X" % i,
+                    a_s[i] + b_s[i] * X_no_obs_i,
+                    sigma_ws[i],
+                    observed=W,
+                )
+                pm.Bernoulli(
+                    "Y_%d_no_obs_X" % i,
+                    logit_p=beta0s[i] + betax * X_no_obs_i,
+                    observed=Y,
+                )
+                start = end
+
+            # for samples that can see X
+            if self._hier_prior_on_x:
+                pm.Normal("X_obs", mu_x, sigma_x, observed=X_Know)
+            for i, XWY in enumerate(XWY_xKnow):
+                if XWY is None:
+                    continue
+                X, W, Y = XWY
+                pm.Normal(
+                    "W_%d_obs_X" % i,
+                    a_s[i] + b_s[i] * X,
+                    sigma_ws[i],
+                    observed=W,
+                )
+                pm.Bernoulli(
+                    "Y_%d_obs_X" % i,
+                    logit_p=beta0s[i] + betax * X,
+                    observed=Y,
+                )
+
+        return model
+
+
+class SimpleModel(ModelwLikelihood):
+    def _set_prior(
+        self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
+    ) -> Tuple[pm.Distribution | np.ndarray]:
+        betax = pm.Flat("betax")
+
+        if self._hier_prior_on_x:
+            mu_x = pm.Normal("mu_x", 0, 10)
+            sigma_x = pm.Gamma("sigma_x", mu=1, sigma=10)
+        else:
+            mu_x, sigma_x = X_Know.mean(), X_Know.std()
+
+        a_s = pm.Flat("a_s", size=n_studies)
+        b_s = pm.Flat("b_s", size=n_studies)
+        sigma_ws = pm.HalfCauchy("sigma_ws", 1.0)
+
+        beta0 = pm.Flat("beta0")
+
+        return mu_x, sigma_x, a_s, b_s, sigma_ws, beta0, betax
+
+
+class HierachicalModel(ModelwLikelihood):
+    def _set_prior(
+        self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
+    ) -> Tuple[pm.Distribution | np.ndarray]:
+        betax = pm.Flat("betax")
+
+        if self._hier_prior_on_x:
+            mu_x = pm.Normal("mu_x", 0, 10)
+            sigma_x = pm.HalfCauchy("sigma_x", 1.0)
+        else:
+            mu_x, sigma_x = X_Know.mean(), X_Know.std()
+
+        mu_sigma_w = pm.HalfFlat("mu_sigma_w")
+        sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
+        if self._prior_sigma_ws == "gamma":
+            sigma_ws = pm.Gamma(
+                "sigma_ws",
+                mu=mu_sigma_w,
+                sigma=sigma_sigma_w,
+                size=n_studies,
+            )
+        elif self._prior_sigma_ws == "inv_gamma":
+            sigma2_ws = pm.InverseGamma(
+                "sigma2_ws",
+                mu=mu_sigma_w,
+                sigma=sigma_sigma_w,
+                size=n_studies,
+            )
+            sigma_ws = pm.Deterministic("sigma_ws", pm.math.sqrt(sigma2_ws))
+
+        a = pm.Normal("a", 0, 10)
+        b = pm.Normal("b", 0, 10)
+        beta0 = pm.Flat("beta0")
+        if self._prior_sigma_ab0 == "half_cauchy":
+            sigma_a = pm.HalfCauchy("sigma_a", 1.0)
+            sigma_b = pm.HalfCauchy("sigma_b", 1.0)
+            sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
+        elif self._prior_sigma_ab0 == "half_flat":
+            sigma_a = pm.HalfFlat("sigma_a")
+            sigma_b = pm.HalfFlat("sigma_b")
+            sigma_0 = pm.HalfFlat("sigma_0")
+        a_s = pm.Normal("a_s", a, sigma_a, size=n_studies)
+        b_s = pm.Normal("b_s", b, sigma_b, size=n_studies)
+        beta0s = pm.Normal("beta0s", beta0, sigma_0, size=n_studies)
+
+        return mu_x, sigma_x, a_s, b_s, sigma_ws, beta0s, betax

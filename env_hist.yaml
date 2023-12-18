@@ -6,9 +6,12 @@ dependencies:
   - pymc=5.10
   - ipdb
   - tqdm
-  - blackjax
+  - blackjax=0.9.6
   - numpyro
   - ca-certificates
   - openssl
   - openpyxl
+  - nutpie
+  - ipykernel
+  - seaborn
 prefix: /home/rongzhiwei/mambaforge/envs/pymc_env2
