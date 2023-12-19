@@ -14,8 +14,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from src.evaluate import evaluate
-from src.method import Model
-from src.simulate import Simulator2
+from src.method import HierachicalModel
+from src.simulate import Simulator
 
 # suppress the pymc messages
 logger_pymc = logging.getLogger("pymc")
@@ -35,13 +35,13 @@ logger_main.addHandler(ch)
 
 def _pipeline(
     seed: int,
-    simulator: Simulator2,
+    simulator: Simulator,
     analysis_kwargs: Dict = {},
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     sim_dat = simulator.simulate(seed)
     sim_dat["S"] = sim_dat["S"] - 1  # 模拟实验是从1开始的，现在改成0
 
-    model = Model(seed=seed, **analysis_kwargs)
+    model = HierachicalModel(seed=seed, **analysis_kwargs)
     model.fit(sim_dat)
     baye_res = model.summary()
 
@@ -76,10 +76,17 @@ class Trials:
         pytensor_cache: Optional[str] = None,
         prevalence: float = 0.05,
         OR: float = 1.25,
-        sigma2_e: Union[float, Sequence[float]] = 0.1,
+        sigma2_e: Union[float, Sequence[float]] = 1.0,
         sigma2_x: Union[float, Sequence[float]] = 1.0,
         a: Union[float, Sequence[float]] = [-3, 1, -1, 3],
         b: Union[float, Sequence[float]] = [0.5, 0.75, 1.25, 1.5],
+        sample_studies: bool = False,
+        n_studies: int = 4,
+        sigma2e_shape: float = 1.0,
+        a_mu: float = 0.,
+        a_sigma: float = 3.0,
+        b_mu: float = 0.,
+        b_sigma: float = 3.0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
@@ -88,17 +95,33 @@ class Trials:
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
-        self._simulator = Simulator2(
-            prevalence=prevalence,
-            OR=OR,
-            direction=direction,
-            sigma2_e=sigma2_e,
-            sigma2_x=sigma2_x,
-            a=a,
-            b=b,
-            n_sample_per_studies=n_sample_per_studies,
-            n_knowX_per_studies=n_knowX_per_studies,
-        )
+        if sample_studies:
+            self._simulator = Simulator.sample_studies(
+                sigma2_x=sigma2_x,
+                OR=OR,
+                prevalence=prevalence,
+                n_studies=n_studies,
+                a_mu=a_mu,
+                a_sigma=a_sigma,
+                b_mu=b_mu,
+                b_sigma=b_sigma,
+                sigma2e_shape=sigma2e_shape,
+                n_sample_per_studies=n_sample_per_studies,
+                n_knowX_per_studies=n_knowX_per_studies,
+                direction=direction,
+            )
+        else:
+            self._simulator = Simulator(
+                prevalence=prevalence,
+                OR=OR,
+                direction=direction,
+                sigma2_e=sigma2_e,
+                sigma2_x=sigma2_x,
+                a=a,
+                b=b,
+                n_sample_per_studies=n_sample_per_studies,
+                n_knowX_per_studies=n_knowX_per_studies,
+            )
         self._analysis_kwargs = dict(
             solver=solver,
             prior_sigma_ws=prior_sigma_ws,
@@ -252,6 +275,15 @@ def main():
         default="pymc",
     )
 
+    # simulation settings
+    parser.add_argument(
+        "--sample_studies",
+        action="store_true",
+        help=(
+            "if set sample_studies, simulator will sample a, b and sigma2e "
+            "from normal and inverse gamma distributions."
+        ),
+    )
     parser.add_argument(
         "--prevalence", type=float, nargs="+", default=[0.05, 0.25, 0.50]
     )
@@ -264,8 +296,16 @@ def main():
     parser.add_argument(
         "--b", type=float, nargs="+", default=[0.5, 0.75, 1.25, 1.5]
     )
+    parser.add_argument("--n_studies", type=int, default=4)
+    parser.add_argument("--sigma2e_shape", type=float, default=1.5)
+    parser.add_argument("--a_mu", type=float, default=0.)
+    parser.add_argument("--a_sigma", type=float, default=3.)
+    parser.add_argument("--b_mu", type=float, default=0.)
+    parser.add_argument("--b_sigma", type=float, default=3.)
     parser.add_argument("--nSamples", type=int, nargs="+", default=[1000])
     parser.add_argument("--nKnowX", type=int, nargs="+", default=[100])
+
+    # bayesian inference settings
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
@@ -338,12 +378,22 @@ def main():
             pytensor_cache=osp.expanduser("~/.pytensor/"),
             prevalence=prev_i,
             OR=or_i,
+            # do not sample studies
             sigma2_e=(
                 args.sigma2e[0] if len(args.sigma2e) == 1 else args.sigma2e
             ),
             sigma2_x=args.sigma2x,
             a=args.a,
             b=args.b,
+            # sample studies
+            sample_studies=args.sample_studies,
+            n_studies=args.n_studies,
+            sigma2e_shape=args.sigma2e_shape,
+            a_mu=args.a_mu,
+            a_sigma=args.a_sigma,
+            b_mu=args.b_mu,
+            b_sigma=args.b_sigma,
+            # other args
             n_sample_per_studies=(
                 args.nSamples[0] if len(args.nSamples) == 1 else args.nSamples
             ),
@@ -352,7 +402,7 @@ def main():
             ),
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
-            use_hier_x_prior=args.use_hier_x_prior
+            use_hier_x_prior=args.use_hier_x_prior,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(
