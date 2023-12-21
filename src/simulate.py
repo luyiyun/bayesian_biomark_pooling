@@ -43,6 +43,7 @@ class Simulator:
         sigma2e_shape: float = 1.5,
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
+        n_knowX_balance: bool = False,
         direction: Literal["x->w", "w->x"] = "x->w",
         seed: int = 0,
     ):
@@ -62,6 +63,7 @@ class Simulator:
             sigma2_e=sigma2e,
             n_sample_per_studies=n_sample_per_studies,
             n_knowX_per_studies=n_knowX_per_studies,
+            n_knowX_balance=n_knowX_balance,
             direction=direction,
         )
 
@@ -77,6 +79,7 @@ class Simulator:
         sigma2_e: Union[float, Sequence[float]] = 1.0,
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
+        n_knowX_balance: bool = False,
         direction: Literal["x->w", "w->x"] = "x->w",
     ) -> None:
         assert direction in ["x->w", "w->x"]
@@ -145,6 +148,7 @@ class Simulator:
             "n_studies": ns,
             "direction": direction,
             "n_samples": np.sum(n_sample_per_studies),
+            "n_knowX_balance": n_knowX_balance,
         }
 
         if direction == "w->x":
@@ -204,9 +208,22 @@ class Simulator:
             if ni < nxi:
                 raise ValueError("nsamples(%d) < nKnowX(%d)" % (ni, nxi))
             elif ni > nxi:
-                nan_ind = rng.choice(
-                    np.arange(start, end), ni - nxi, replace=False
-                )
+                if self._parameters["n_knowX_balance"]:
+                    n_nan = ni - nxi
+                    n_nan_0 = n_nan // 2
+                    n_nan_1 = n_nan - n_nan_0
+                    Yi = Y[start:end]
+                    nan_ind0 = rng.choice(
+                        np.nonzero(Yi == 0)[0], n_nan_0, replace=False
+                    )
+                    nan_ind1 = rng.choice(
+                        np.nonzero(Yi == 1)[0], n_nan_1, replace=False
+                    )
+                    nan_ind = np.concatenate([nan_ind0, nan_ind1])
+                else:
+                    nan_ind = rng.choice(
+                        np.arange(start, end), ni - nxi, replace=False
+                    )
                 X_obs[nan_ind] = np.NaN
             start = end
 

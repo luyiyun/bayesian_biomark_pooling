@@ -205,14 +205,22 @@ class ModelwLikelihood(Model):
     ) -> Model:
         with pm.Model() as model:
             (
-                mu_x,
-                sigma_x,
                 a_s,
                 b_s,
                 sigma_ws,
                 beta0s,
                 betax,
             ) = self._set_prior(n_studies, n_xKnow, n_xUnKnow, X_Know)
+
+            if self._hier_prior_on_x:
+                mu_x = pm.Normal("mu_x", 0, 10)
+
+                m, sigma = 1, 1
+                beta = (m + np.sqrt(m + sigma**2)) / (2 * sigma**2)
+                alpha = m * beta + 1
+                sigma_x = pm.Gamma("sigma_x", alpha=alpha, beta=beta)
+            else:
+                mu_x, sigma_x = X_Know.mean(), X_Know.std()
 
             if beta0s.ndim == 0:
                 beta0s = [beta0s] * n_studies
@@ -274,19 +282,13 @@ class SimpleModel(ModelwLikelihood):
     ) -> Tuple[pm.Distribution | np.ndarray]:
         betax = pm.Flat("betax")
 
-        if self._hier_prior_on_x:
-            mu_x = pm.Normal("mu_x", 0, 10)
-            sigma_x = pm.Gamma("sigma_x", mu=1, sigma=10)
-        else:
-            mu_x, sigma_x = X_Know.mean(), X_Know.std()
-
         a_s = pm.Flat("a_s", size=n_studies)
         b_s = pm.Flat("b_s", size=n_studies)
         sigma_ws = pm.HalfCauchy("sigma_ws", 1.0)
 
         beta0 = pm.Flat("beta0")
 
-        return mu_x, sigma_x, a_s, b_s, sigma_ws, beta0, betax
+        return a_s, b_s, sigma_ws, beta0, betax
 
 
 class HierachicalModel(ModelwLikelihood):
@@ -295,17 +297,17 @@ class HierachicalModel(ModelwLikelihood):
     ) -> Tuple[pm.Distribution | np.ndarray]:
         betax = pm.Flat("betax")
 
-        if self._hier_prior_on_x:
-            mu_x = pm.Normal("mu_x", 0, 10)
-            sigma_x = pm.HalfCauchy("sigma_x", 1.0)
-        else:
-            mu_x, sigma_x = X_Know.mean(), X_Know.std()
-
-        mu_sigma_w = pm.HalfFlat("mu_sigma_w")
+        mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
         sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
         if self._prior_sigma_ws == "gamma":
+            # beta = (
+            #     mu_sigma_w + pm.math.sqrt(mu_sigma_w + sigma_sigma_w**2)
+            # ) / (2 * pm.math.sqr(sigma_sigma_w))
+            # alpha = mu_sigma_w * beta + 1
             sigma_ws = pm.Gamma(
                 "sigma_ws",
+                # alpha=alpha,
+                # beta=beta,
                 mu=mu_sigma_w,
                 sigma=sigma_sigma_w,
                 size=n_studies,
@@ -334,4 +336,4 @@ class HierachicalModel(ModelwLikelihood):
         b_s = pm.Normal("b_s", b, sigma_b, size=n_studies)
         beta0s = pm.Normal("beta0s", beta0, sigma_0, size=n_studies)
 
-        return mu_x, sigma_x, a_s, b_s, sigma_ws, beta0s, betax
+        return a_s, b_s, sigma_ws, beta0s, betax

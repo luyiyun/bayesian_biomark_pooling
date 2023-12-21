@@ -83,14 +83,15 @@ class Trials:
         sample_studies: bool = False,
         n_studies: int = 4,
         sigma2e_shape: float = 1.0,
-        a_mu: float = 0.,
+        a_mu: float = 0.0,
         a_sigma: float = 3.0,
-        b_mu: float = 0.,
+        b_mu: float = 0.0,
         b_sigma: float = 3.0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
+        n_knowX_balance: bool = False,
         use_hier_x_prior: bool = True,
     ) -> None:
         self._nrepeat = nrepeat
@@ -108,6 +109,7 @@ class Trials:
                 sigma2e_shape=sigma2e_shape,
                 n_sample_per_studies=n_sample_per_studies,
                 n_knowX_per_studies=n_knowX_per_studies,
+                n_knowX_balance=n_knowX_balance,
                 direction=direction,
             )
         else:
@@ -121,6 +123,7 @@ class Trials:
                 b=b,
                 n_sample_per_studies=n_sample_per_studies,
                 n_knowX_per_studies=n_knowX_per_studies,
+                n_knowX_balance=n_knowX_balance,
             )
         self._analysis_kwargs = dict(
             solver=solver,
@@ -298,12 +301,20 @@ def main():
     )
     parser.add_argument("--n_studies", type=int, default=4)
     parser.add_argument("--sigma2e_shape", type=float, default=1.5)
-    parser.add_argument("--a_mu", type=float, default=0.)
-    parser.add_argument("--a_sigma", type=float, default=3.)
-    parser.add_argument("--b_mu", type=float, default=0.)
-    parser.add_argument("--b_sigma", type=float, default=3.)
+    parser.add_argument("--a_mu", type=float, default=0.0)
+    parser.add_argument("--a_sigma", type=float, default=3.0)
+    parser.add_argument("--b_mu", type=float, default=0.0)
+    parser.add_argument("--b_sigma", type=float, default=3.0)
     parser.add_argument("--nSamples", type=int, nargs="+", default=[1000])
     parser.add_argument("--nKnowX", type=int, nargs="+", default=[100])
+    parser.add_argument(
+        "--n_knowX_balance",
+        action="store_true",
+        help=(
+            "if set n_knowX_balance, "
+            "the y of samples which have X will be balanced."
+        ),
+    )
 
     # bayesian inference settings
     parser.add_argument(
