@@ -321,7 +321,7 @@ def main():
         "--prior_sigma_ws",
         type=str,
         choices=["gamma", "inv_gamma"],
-        default="gamma",
+        default="inv_gamma",
     )
     parser.add_argument(
         "--prior_sigma_ab0",
@@ -329,7 +329,8 @@ def main():
         choices=["half_cauchy", "half_flat"],
         default="half_cauchy",
     )
-    parser.add_argument("--use_hier_x_prior", action="store_true")
+    # parser.add_argument("--use_hier_x_prior", action="store_true")
+    parser.add_argument("--direct_x_prior", action="store_true")
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -413,7 +414,7 @@ def main():
             ),
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
-            use_hier_x_prior=args.use_hier_x_prior,
+            use_hier_x_prior=not args.direct_x_prior,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(
