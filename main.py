@@ -93,9 +93,11 @@ class Trials:
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_balance: bool = False,
         use_hier_x_prior: bool = True,
+        block_size: Optional[int] = None,
     ) -> None:
         self._nrepeat = nrepeat
         self._ncores = ncores
+        self._block_size = block_size
         if sample_studies:
             self._simulator = Simulator.sample_studies(
                 sigma2_x=sigma2_x,
@@ -197,32 +199,65 @@ class Trials:
                 res_anal.append(ana_i)
                 res_eval.append(eva_i)
         else:
-            # 移除pytensor创建的临时文件，避免多进程时的报错
-            if self._pytensor_cache is not None and osp.exists(
-                self._pytensor_cache
-            ):
-                for fn in os.listdir(self._pytensor_cache):
-                    logger_main.info("remove pytensor cache: %s" % fn)
-                    shutil.rmtree(osp.join(self._pytensor_cache, fn))
 
-            with mp.Pool(ncores) as pool:
-                temp_reses = [
-                    pool.apply_async(
-                        _pipeline,
-                        (seedi, self._simulator, self._analysis_kwargs),
-                    )
-                    for seedi in range(nrepeat)
-                ]
-                for temp_resi in tqdm(temp_reses, desc="Pipeline: "):
+            def _remove_cache(cache_dir):
+                # 移除pytensor创建的临时文件，避免多进程时的报错
+                if cache_dir is not None and osp.exists(cache_dir):
+                    for fn in os.listdir(cache_dir):
+                        logger_main.info("remove pytensor cache: %s" % fn)
+                        shutil.rmtree(osp.join(cache_dir, fn))
+
+            def _mp_block(seed0, seed1, bar=None):
+                res_simu, res_anal, res_eval = [], [], []
+                with mp.Pool(ncores) as pool:
+                    temp_reses = [
+                        pool.apply_async(
+                            _pipeline,
+                            (seedi, self._simulator, self._analysis_kwargs),
+                        )
+                        for seedi in range(seed0, seed1)
+                    ]
+                    for temp_resi in temp_reses:
+                        (
+                            (sim_i, sim_col),
+                            (ana_i, ana_col, ana_ind),
+                            (eva_i, eva_col, eva_ind),
+                        ) = temp_resi.get()
+                        res_simu.append(sim_i)
+                        res_anal.append(ana_i)
+                        res_eval.append(eva_i)
+                        if bar is not None:
+                            bar.update()
+                return (
+                    (res_simu, sim_col),
+                    (res_anal, ana_col, ana_ind),
+                    (res_eval, eva_col, eva_ind),
+                )
+
+            with tqdm(desc="Pipeline: ", total=nrepeat) as bar:
+                if self._block_size is None:
+                    _remove_cache(self._pytensor_cache)
                     (
-                        (sim_i, sim_col),
-                        (ana_i, ana_col, ana_ind),
-                        (eva_i, eva_col, eva_ind),
-                    ) = temp_resi.get()
-                    res_simu.append(sim_i)
-                    res_anal.append(ana_i)
-                    res_eval.append(eva_i)
-
+                        (res_simu, sim_col),
+                        (res_anal, ana_col, ana_ind),
+                        (res_eval, eva_col, eva_ind),
+                    ) = _mp_block(0, nrepeat, bar)
+                else:
+                    n_block = (nrepeat + 1) // self._block_size
+                    for bi in range(n_block):
+                        _remove_cache(self._pytensor_cache)
+                        (
+                            (res_simu_bi, sim_col),
+                            (res_anal_bi, ana_col, ana_ind),
+                            (res_eval_bi, eva_col, eva_ind),
+                        ) = _mp_block(
+                            bi * self._block_size,
+                            min((bi + 1) * self._block_size, nrepeat),
+                            bar
+                        )
+                        res_simu.extend(res_simu_bi)
+                        res_anal.extend(res_anal_bi)
+                        res_eval.extend(res_eval_bi)
         res_simu = np.stack(res_simu, axis=0)
         res_anal = np.stack(res_anal, axis=0)
         res_eval = np.stack(res_eval, axis=0)
@@ -415,6 +450,7 @@ def main():
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
             use_hier_x_prior=not args.direct_x_prior,
+            block_size=500,
         )
         if args.tasks == "simulate":
             save_fn = osp.join(
