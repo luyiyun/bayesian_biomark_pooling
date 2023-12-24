@@ -200,11 +200,15 @@ class Trials:
                 res_eval.append(eva_i)
         else:
 
-            def _remove_cache(cache_dir):
+            def _remove_cache(cache_dir, bar=None):
                 # 移除pytensor创建的临时文件，避免多进程时的报错
                 if cache_dir is not None and osp.exists(cache_dir):
                     for fn in os.listdir(cache_dir):
-                        logger_main.info("remove pytensor cache: %s" % fn)
+                        msg = "remove pytensor cache: %s" % fn
+                        if bar is None:
+                            logger_main.info(msg)
+                        else:
+                            bar.write(msg)
                         shutil.rmtree(osp.join(cache_dir, fn))
 
             def _mp_block(seed0, seed1, bar=None):
@@ -236,7 +240,7 @@ class Trials:
 
             with tqdm(desc="Pipeline: ", total=nrepeat) as bar:
                 if self._block_size is None:
-                    _remove_cache(self._pytensor_cache)
+                    _remove_cache(self._pytensor_cache, bar)
                     (
                         (res_simu, sim_col),
                         (res_anal, ana_col, ana_ind),
@@ -245,7 +249,7 @@ class Trials:
                 else:
                     n_block = (nrepeat + 1) // self._block_size
                     for bi in range(n_block):
-                        _remove_cache(self._pytensor_cache)
+                        _remove_cache(self._pytensor_cache, bar)
                         (
                             (res_simu_bi, sim_col),
                             (res_anal_bi, ana_col, ana_ind),
