@@ -89,6 +89,7 @@ class Trials:
         b_sigma: float = 3.0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
+        prior_betax: Literal["flat", "normal"] = "flat",
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_balance: bool = False,
@@ -131,6 +132,7 @@ class Trials:
             solver=solver,
             prior_sigma_ws=prior_sigma_ws,
             prior_sigma_ab0=prior_sigma_ab0,
+            prior_betax=prior_betax,
             nsample=ndraws,
             ntunes=ntunes,
             hier_prior_on_x=use_hier_x_prior,
@@ -368,6 +370,12 @@ def main():
         choices=["half_cauchy", "half_flat"],
         default="half_cauchy",
     )
+    parser.add_argument(
+        "--prior_betax",
+        type=str,
+        choices=["flat", "normal"],
+        default="flat",
+    )
     # parser.add_argument("--use_hier_x_prior", action="store_true")
     parser.add_argument("--direct_x_prior", action="store_true")
     parser.add_argument(
@@ -453,6 +461,7 @@ def main():
             ),
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
+            prior_betax=args.prior_betax,
             use_hier_x_prior=not args.direct_x_prior,
             block_size=500,
         )

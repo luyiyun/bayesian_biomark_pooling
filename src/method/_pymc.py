@@ -123,7 +123,10 @@ class SimpleModel(ModelwLikelihood):
     def _set_prior(
         self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
     ) -> Tuple[pm.Distribution | np.ndarray]:
-        betax = pm.Flat("betax")
+        if self._prior_betax == "flat":
+            betax = pm.Flat("betax")
+        elif self._prior_betax == "normal":
+            betax = pm.Normal("betax", mu=0, sigma=1)
 
         a_s = pm.Flat("a_s", size=n_studies)
         b_s = pm.Flat("b_s", size=n_studies)
@@ -138,7 +141,10 @@ class HierachicalModel(ModelwLikelihood):
     def _set_prior(
         self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
     ) -> Tuple[pm.Distribution | np.ndarray]:
-        betax = pm.Flat("betax")
+        if self._prior_betax == "flat":
+            betax = pm.Flat("betax")
+        elif self._prior_betax == "normal":
+            betax = pm.Normal("betax", mu=0, sigma=1)
 
         mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
         sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
