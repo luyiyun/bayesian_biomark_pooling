@@ -16,15 +16,8 @@ class Model:
             "pymc", "blackjax", "numpyro", "nutpie", "vi"
         ] = "pymc",
         seed: int = 0,
-        prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
-        prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-        prior_betax: Literal["flat", "normal"] = "flat",
-        hier_prior_on_x: bool = True,
     ) -> None:
         assert solver in ["pymc", "blackjax", "numpyro", "nutpie", "vi"]
-        assert prior_sigma_ws in ["gamma", "inv_gamma"]
-        assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
-        assert prior_betax in ["flat", "normal"]
 
         self._nsample = nsample
         self._ntunes = ntunes
@@ -32,10 +25,6 @@ class Model:
         self._pbar = pbar
         self._solver = solver
         self._seed = seed
-        self._prior_sigma_ws = prior_sigma_ws
-        self._prior_sigma_ab0 = prior_sigma_ab0
-        self._prior_betax = prior_betax
-        self._hier_prior_on_x = hier_prior_on_x
 
     def _create_model(
         self,

@@ -90,6 +90,9 @@ class Trials:
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         prior_betax: Literal["flat", "normal"] = "flat",
+        prior_a_std: float = 10.0,
+        prior_b_std: float = 10.0,
+        prior_beta0_std: float = 10.0,
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_balance: bool = False,
@@ -133,6 +136,9 @@ class Trials:
             prior_sigma_ws=prior_sigma_ws,
             prior_sigma_ab0=prior_sigma_ab0,
             prior_betax=prior_betax,
+            prior_a_std=prior_a_std,
+            prior_b_std=prior_b_std,
+            prior_beta0_std=prior_beta0_std,
             nsample=ndraws,
             ntunes=ntunes,
             hier_prior_on_x=use_hier_x_prior,
@@ -259,7 +265,7 @@ class Trials:
                         ) = _mp_block(
                             bi * self._block_size,
                             min((bi + 1) * self._block_size, nrepeat),
-                            bar
+                            bar,
                         )
                         res_simu.extend(res_simu_bi)
                         res_anal.extend(res_anal_bi)
@@ -307,8 +313,8 @@ def main():
     parser.add_argument(
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
-    parser.add_argument("--summarize_save_fn", type=str, default=None)
     parser.add_argument("--summarize_target_pattern", type=str, default=None)
+    parser.add_argument("--summarize_save_fn", type=str, default=None)
 
     parser.add_argument("--nrepeat", type=int, default=10)
     parser.add_argument("--ncores", type=int, default=1)
@@ -376,6 +382,9 @@ def main():
         choices=["flat", "normal"],
         default="flat",
     )
+    parser.add_argument("--prior_a_std", type=float, default=10.0)
+    parser.add_argument("--prior_b_std", type=float, default=10.0)
+    parser.add_argument("--prior_beta0_std", type=float, default=10.0)
     # parser.add_argument("--use_hier_x_prior", action="store_true")
     parser.add_argument("--direct_x_prior", action="store_true")
     parser.add_argument(
@@ -395,35 +404,47 @@ def main():
             else:
                 assert len(arg_i) == n_studies
 
-    if args.summarize_target_pattern is not None:
+    if args.tasks == "summarize":
         # 依靠pattern来找到要print的结果，而非通过指定的参数
         # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
-        pattern = re.compile(re.escape(args.summarize_target_pattern))
-        for fn in os.listdir(save_root):
-            if fn.startswith("pipeline_") and fn.endswith(".h5"):
-                search_res = pattern.search(fn)
-                if search_res:
-                    res_fn = osp.join(save_root, fn)
-                    logger_main.info("The results of %s is:" % res_fn)
-                    with h5py.File(res_fn, "r") as h5:
-                        g_eva = h5["evaluate"]
-                        summ_df = summarise_results(
-                            g_eva["values"][:],
-                            g_eva.attrs["index"],
-                            g_eva.attrs["columns"],
-                        )
-                    if args.summarize_save_fn is not None:
-                        summ_save_ffn = osp.join(
-                            save_root, args.summarize_save_fn
-                        )
-                        # sheet name中不能有[]
-                        stname = fn[9:-3].replace("[", "@").replace("]", "")
-                        with pd.ExcelWriter(
-                            summ_save_ffn,
-                            mode="a" if osp.exists(summ_save_ffn) else "w",
-                        ) as writer:
-                            summ_df.to_excel(writer, sheet_name=stname)
-                    print(summ_df)
+        fns = [
+            fn
+            for fn in os.listdir(save_root)
+            if fn.startswith("pipeline_") and fn.endswith(".h5")
+        ]
+        if args.summarize_target_pattern is not None:
+            pattern = re.compile(re.escape(args.summarize_target_pattern))
+            fns = [fn for fn in fns if pattern.search(fn)]
+        all_summ_dfs = []
+        for fn in fns:
+            # 提取其OR值和prevalence值
+            fn_prev = float(
+                re.search(r"prev([0-9_]*?)-", fn).group(1).replace("_", ".")
+            )
+            fn_or = float(
+                re.search(r"OR([0-9_]*?)-", fn).group(1).replace("_", ".")
+            )
+            res_fn = osp.join(save_root, fn)
+            with h5py.File(res_fn, "r") as h5:
+                g_eva = h5["evaluate"]
+                summ_df = summarise_results(
+                    g_eva["values"][:],
+                    g_eva.attrs["index"],
+                    g_eva.attrs["columns"],
+                )
+            # summ_df = summ_df.loc[[args.summarize_parameter], :]
+            summ_df["prev"] = fn_prev
+            summ_df["OR"] = fn_or
+            all_summ_dfs.append(summ_df)
+        all_summ_dfs = pd.concat(all_summ_dfs)
+        all_summ_dfs.reset_index(inplace=True, names="parameter")
+        all_summ_dfs.set_index(["parameter", "prev", "OR"], inplace=True)
+        all_summ_dfs.sort_index(inplace=True)
+        print(all_summ_dfs.to_string())
+        if args.summarize_save_fn is not None:
+            summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
+            with pd.ExcelWriter(summ_save_ffn, mode="w") as writer:
+                all_summ_dfs.to_excel(writer)
         return
 
     for prev_i, or_i in product(args.prevalence, args.OR):
@@ -462,6 +483,9 @@ def main():
             prior_sigma_ws=args.prior_sigma_ws,
             prior_sigma_ab0=args.prior_sigma_ab0,
             prior_betax=args.prior_betax,
+            prior_a_std=args.prior_a_std,
+            prior_b_std=args.prior_b_std,
+            prior_beta0_std=args.prior_beta0_std,
             use_hier_x_prior=not args.direct_x_prior,
             block_size=500,
         )
@@ -480,29 +504,6 @@ def main():
                 g_sim = h5.create_group("simulate")
                 g_sim.attrs["columns"] = cols
                 g_sim.create_dataset("values", data=arr)
-        elif args.tasks == "summarize":
-            res_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
-            if not osp.exists(res_fn):
-                logger_main.info("%s not exists, skip." % res_fn)
-            else:
-                logger_main.info("The results of %s is:" % res_fn)
-                with h5py.File(res_fn, "r") as h5:
-                    g_eva = h5["evaluate"]
-                    summ_df = summarise_results(
-                        g_eva["values"][:],
-                        g_eva.attrs["index"],
-                        g_eva.attrs["columns"],
-                    )
-                if args.summarize_save_fn is not None:
-                    summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
-                    # sheet name中不能有[]
-                    stname = trial_i._name.replace("[", "@").replace("]", "")
-                    with pd.ExcelWriter(
-                        summ_save_ffn,
-                        mode="a" if osp.exists(summ_save_ffn) else "w",
-                    ) as writer:
-                        summ_df.to_excel(writer, sheet_name=stname)
-                print(summ_df)
         elif args.tasks == "all":
             save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
             if osp.exists(save_fn):

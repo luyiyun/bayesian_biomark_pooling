@@ -1,4 +1,4 @@
-from typing import Tuple, Union, List
+from typing import Literal, Tuple, Union, List
 import numpy as np
 import pymc as pm
 
@@ -21,13 +21,26 @@ class PymcModel(Model):
                     nuts_sampler=self._solver,
                 )
             elif self._solver == "vi":
-                res = pm.fit(
-                    progressbar=self._pbar, random_seed=self._seed
-                )
+                res = pm.fit(progressbar=self._pbar, random_seed=self._seed)
         return res
 
 
 class ModelwLikelihood(PymcModel):
+    def __init__(
+        self,
+        nsample: int = 1000,
+        ntunes: int = 1000,
+        nchains: int = 1,
+        pbar: bool = False,
+        solver: Literal[
+            "pymc", "blackjax", "numpyro", "nutpie", "vi"
+        ] = "pymc",
+        seed: int = 0,
+        hier_prior_on_x: bool = True,
+    ) -> None:
+        super().__init__(nsample, ntunes, nchains, pbar, solver, seed)
+        self._hier_prior_on_x = hier_prior_on_x
+
     def _set_prior(
         self,
         n_studies: int,
@@ -120,6 +133,25 @@ class ModelwLikelihood(PymcModel):
 
 
 class SimpleModel(ModelwLikelihood):
+    def __init__(
+        self,
+        nsample: int = 1000,
+        ntunes: int = 1000,
+        nchains: int = 1,
+        pbar: bool = False,
+        solver: Literal[
+            "pymc", "blackjax", "numpyro", "nutpie", "vi"
+        ] = "pymc",
+        seed: int = 0,
+        hier_prior_on_x: bool = True,
+        prior_betax: Literal["flat", "normal"] = "flat",
+    ) -> None:
+        assert prior_betax in ["flat", "normal"]
+        super().__init__(
+            nsample, ntunes, nchains, pbar, solver, seed, hier_prior_on_x
+        )
+        self._prior_betax = prior_betax
+
     def _set_prior(
         self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
     ) -> Tuple[pm.Distribution | np.ndarray]:
@@ -137,7 +169,43 @@ class SimpleModel(ModelwLikelihood):
         return a_s, b_s, sigma_ws, beta0, betax
 
 
-class HierachicalModel(ModelwLikelihood):
+class HierachicalModel(SimpleModel):
+    def __init__(
+        self,
+        nsample: int = 1000,
+        ntunes: int = 1000,
+        nchains: int = 1,
+        pbar: bool = False,
+        solver: Literal[
+            "pymc", "blackjax", "numpyro", "nutpie", "vi"
+        ] = "pymc",
+        seed: int = 0,
+        hier_prior_on_x: bool = True,
+        prior_betax: Literal["flat", "normal"] = "flat",
+        prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
+        prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
+        prior_a_std: float = 10.,
+        prior_b_std: float = 10.,
+        prior_beta0_std: float = 10.,
+    ) -> None:
+        assert prior_sigma_ws in ["gamma", "inv_gamma"]
+        assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
+        super().__init__(
+            nsample,
+            ntunes,
+            nchains,
+            pbar,
+            solver,
+            seed,
+            hier_prior_on_x,
+            prior_betax,
+        )
+        self._prior_sigma_ws = prior_sigma_ws
+        self._prior_sigma_ab0 = prior_sigma_ab0
+        self._prior_a_std = prior_a_std
+        self._prior_b_std = prior_b_std
+        self._prior_beta0_std = prior_beta0_std
+
     def _set_prior(
         self, n_studies: int, n_xKnow: int, n_xUnKnow: int, X_Know: np.ndarray
     ) -> Tuple[pm.Distribution | np.ndarray]:
@@ -170,9 +238,11 @@ class HierachicalModel(ModelwLikelihood):
             )
             sigma_ws = pm.Deterministic("sigma_ws", pm.math.sqrt(sigma2_ws))
 
-        a = pm.Normal("a", 0, 10)
-        b = pm.Normal("b", 0, 10)
-        beta0 = pm.Flat("beta0")
+        # TODO: a、b和beta0的先验分布可以设置的更加informative一些
+        a = pm.Normal("a", 0, self._prior_a_std)
+        b = pm.Normal("b", 0, self._prior_b_std)
+        beta0 = pm.Normal("beta0", 0, self._prior_beta0_std)
+        # beta0 = pm.Flat("beta0")
         if self._prior_sigma_ab0 == "half_cauchy":
             sigma_a = pm.HalfCauchy("sigma_a", 1.0)
             sigma_b = pm.HalfCauchy("sigma_b", 1.0)
