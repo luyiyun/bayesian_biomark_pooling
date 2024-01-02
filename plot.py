@@ -16,7 +16,8 @@ def parse_xlsx(fn: str) -> Dict[str, pd.DataFrame]:
     for k, sheet in xlsx.items():
         if not k.startswith("scenario"):
             continue
-        sheet = sheet.ffill(axis=0).rename(columns={"Naive.1": "Bayes"})
+        sheet.iloc[:, :2] = sheet.iloc[:, :2].ffill(axis=0)
+        sheet = sheet.rename(columns={"Naive.1": "Bayes"})
         index_cols = sheet.iloc[:, :2]
         index_cols.columns = index_cols.columns.droplevel(1)
         sheet = sheet.iloc[:, 2:]
@@ -95,7 +96,7 @@ def plot_lines(
 fn = "./results/simulation_result.xlsx"
 dfs = parse_xlsx(fn)
 
-keys = ["scenario6", "scenario7", "scenario8"]
+keys = ["scenario6", "scenario7", "scenario8", "scenario9"]
 for key in keys:
-    fig = plot_lines(dfs[key])
+    fig = plot_lines(dfs[key], exclude_methods=("Naive", "x_only"))
     fig.savefig("./results/%s.png" % key)

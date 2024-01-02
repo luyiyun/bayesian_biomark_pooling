@@ -326,6 +326,7 @@ def main():
     )
 
     # simulation settings
+    # TODO: 使用已经模拟好的数据
     parser.add_argument(
         "--sample_studies",
         action="store_true",
