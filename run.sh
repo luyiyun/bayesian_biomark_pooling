@@ -124,14 +124,36 @@
 ##################################################################################################################################################
 OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
 
-save_root=./results/results10-bayes
-python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax flat --save_root $save_root
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
+# save_root=./results/results10-bayes
+# python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax flat --save_root $save_root
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
 
-save_root=./results/results10-bayes2
-python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax normal --save_root $save_root
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
+# save_root=./results/results10-bayes2
+# python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax normal --save_root $save_root
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
 
-save_root=./results/results10-bayes3
-python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root $save_root
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
+# save_root=./results/results10-bayes3
+# python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root $save_root
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root $save_root
+
+
+# save_root=./results/results11
+# python ./main.py --tasks all $OTHERS --nKnowX 20 20 0 0 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root ${save_root}-bayes3
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes3
+
+# python ./main.py --tasks all $OTHERS --nKnowX 20 20 0 0 --prior_betax normal --save_root ${save_root}-bayes2
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes2
+
+# python ./main.py --tasks all $OTHERS --nKnowX 20 20 0 0 --prior_betax flat --save_root ${save_root}-bayes
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes
+
+
+save_root=./results/results12
+python ./main.py --tasks all $OTHERS --nKnowX 10 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root ${save_root}-bayes3
+python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes3
+
+python ./main.py --tasks all $OTHERS --nKnowX 10 --prior_betax normal --save_root ${save_root}-bayes2
+python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes2
+
+python ./main.py --tasks all $OTHERS --nKnowX 10 --prior_betax flat --save_root ${save_root}-bayes
+python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes
