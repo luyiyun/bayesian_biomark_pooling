@@ -76,6 +76,10 @@ class Model:
             else:
                 WY_xUnKnow.append((dfi[W_col].values, dfi[Y_col].values))
 
+        # TODO: 配合多重填补法进一步增强估计的鲁棒性
+        # self._XWY_xKnow = XWY_xKnow
+        # self._WY_xUnKnow = WY_xUnKnow
+
         self._model = self._create_model(
             n_studies, n_xKnow, n_xUnKnow, X_Know, XWY_xKnow, WY_xUnKnow
         )
