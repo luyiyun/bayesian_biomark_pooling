@@ -36,7 +36,7 @@ logger_main.addHandler(ch)
 def _pipeline(
     seed: int,
     simulator: Simulator,
-    model_name: Literal["simple", "hier", "hier_wx"] = "hier",
+    model_name: Literal["simple", "hier", "hier_wx"] = "hierachical",
     analysis_kwargs: Dict = {},
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     sim_dat = simulator.simulate(seed)
@@ -420,142 +420,145 @@ def main():
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
-    # 这些参数的长度需要保持一致或者是scalar
-    n_studies = None
-    for arg_i in [args.a, args.b, args.sigma2e]:
-        if len(arg_i) != 1:
-            if n_studies is None:
-                n_studies = len(arg_i)
-            else:
-                assert len(arg_i) == n_studies
+    dat = pd.read_csv(osp.join(save_root, "BRCA1_simu.csv"), index_col=0)
+    import ipdb; ipdb.set_trace()
 
-    if args.tasks == "summarize":
-        # 依靠pattern来找到要print的结果，而非通过指定的参数
-        # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
-        fns = [
-            fn
-            for fn in os.listdir(save_root)
-            if fn.startswith("pipeline_") and fn.endswith(".h5")
-        ]
-        if args.summarize_target_pattern is not None:
-            pattern = re.compile(re.escape(args.summarize_target_pattern))
-            fns = [fn for fn in fns if pattern.search(fn)]
-        all_summ_dfs = []
-        for fn in fns:
-            # 提取其OR值和prevalence值
-            fn_prev = float(
-                re.search(r"prev([0-9_]*?)-", fn).group(1).replace("_", ".")
-            )
-            fn_or = float(
-                re.search(r"OR([0-9_]*?)-", fn).group(1).replace("_", ".")
-            )
-            res_fn = osp.join(save_root, fn)
-            with h5py.File(res_fn, "r") as h5:
-                g_eva = h5["evaluate"]
-                summ_df = summarise_results(
-                    g_eva["values"][:],
-                    g_eva.attrs["index"],
-                    g_eva.attrs["columns"],
-                )
-            # summ_df = summ_df.loc[[args.summarize_parameter], :]
-            summ_df["prev"] = fn_prev
-            summ_df["OR"] = fn_or
-            all_summ_dfs.append(summ_df)
-        all_summ_dfs = pd.concat(all_summ_dfs)
-        all_summ_dfs.reset_index(inplace=True, names="parameter")
-        all_summ_dfs.set_index(["parameter", "prev", "OR"], inplace=True)
-        all_summ_dfs.sort_index(inplace=True)
-        print(all_summ_dfs.to_string())
-        if args.summarize_save_fn is not None:
-            summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
-            with pd.ExcelWriter(summ_save_ffn, mode="w") as writer:
-                all_summ_dfs.to_excel(writer)
-        return
+    # # 这些参数的长度需要保持一致或者是scalar
+    # n_studies = None
+    # for arg_i in [args.a, args.b, args.sigma2e]:
+    #     if len(arg_i) != 1:
+    #         if n_studies is None:
+    #             n_studies = len(arg_i)
+    #         else:
+    #             assert len(arg_i) == n_studies
 
-    for prev_i, or_i in product(args.prevalence, args.OR):
-        trial_i = Trials(
-            ndraws=1000,
-            ntunes=1000,
-            nrepeat=args.nrepeat,
-            ncores=args.ncores,
-            direction=args.direction,
-            model_name=args.model,
-            solver=args.solver,
-            pytensor_cache=osp.expanduser("~/.pytensor/"),
-            prevalence=prev_i,
-            OR=or_i,
-            # do not sample studies
-            sigma2_e=(
-                args.sigma2e[0] if len(args.sigma2e) == 1 else args.sigma2e
-            ),
-            sigma2_x=args.sigma2x,
-            a=args.a,
-            b=args.b,
-            # sample studies
-            sample_studies=args.sample_studies,
-            n_studies=args.n_studies,
-            sigma2e_shape=args.sigma2e_shape,
-            a_mu=args.a_mu,
-            a_sigma=args.a_sigma,
-            b_mu=args.b_mu,
-            b_sigma=args.b_sigma,
-            # other args
-            n_sample_per_studies=(
-                args.nSamples[0] if len(args.nSamples) == 1 else args.nSamples
-            ),
-            n_knowX_per_studies=(
-                args.nKnowX[0] if len(args.nKnowX) == 1 else args.nKnowX
-            ),
-            prior_sigma_ws=args.prior_sigma_ws,
-            prior_sigma_ab0=args.prior_sigma_ab0,
-            prior_betax=args.prior_betax,
-            prior_a_std=args.prior_a_std,
-            prior_b_std=args.prior_b_std,
-            prior_beta0_std=args.prior_beta0_std,
-            use_hier_x_prior=not args.direct_x_prior,
-            block_size=500,
-        )
-        if args.tasks == "simulate":
-            save_fn = osp.join(
-                save_root, "simulate_%s.h5" % trial_i._simul_name
-            )
-            if osp.exists(save_fn):
-                if args.save_action == "raise":
-                    raise FileExistsError(save_fn)
-                elif args.save_action == "ignore":
-                    logger_main.info("%s existed, skip." % save_fn)
-                    continue
-            arr, cols = trial_i.simulate()
-            with h5py.File(save_fn, "w") as h5:
-                g_sim = h5.create_group("simulate")
-                g_sim.attrs["columns"] = cols
-                g_sim.create_dataset("values", data=arr)
-        elif args.tasks == "all":
-            save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
-            if osp.exists(save_fn):
-                if args.save_action == "raise":
-                    raise FileExistsError(save_fn)
-                elif args.save_action == "ignore":
-                    logger_main.info("%s existed, skip." % save_fn)
-                    continue
-            (
-                (sim_i, sim_col),
-                (ana_i, ana_col, ana_ind),
-                (eva_i, eva_col, eva_ind),
-            ) = trial_i.pipeline()
-            with h5py.File(save_fn, "w") as h5:
-                g_sim = h5.create_group("simulate")
-                g_sim.attrs["columns"] = sim_col
-                g_sim.create_dataset("values", data=sim_i)
-                g_ana = h5.create_group("analysis")
-                g_ana.attrs["columns"] = ana_col
-                g_ana.attrs["index"] = ana_ind
-                g_ana.create_dataset("values", data=ana_i)
-                g_eva = h5.create_group("evaluate")
-                g_eva.attrs["columns"] = eva_col
-                g_eva.attrs["index"] = eva_ind
-                g_eva.create_dataset("values", data=eva_i)
-            print(summarise_results(eva_i, eva_ind, eva_col))
+    # if args.tasks == "summarize":
+    #     # 依靠pattern来找到要print的结果，而非通过指定的参数
+    #     # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
+    #     fns = [
+    #         fn
+    #         for fn in os.listdir(save_root)
+    #         if fn.startswith("pipeline_") and fn.endswith(".h5")
+    #     ]
+    #     if args.summarize_target_pattern is not None:
+    #         pattern = re.compile(re.escape(args.summarize_target_pattern))
+    #         fns = [fn for fn in fns if pattern.search(fn)]
+    #     all_summ_dfs = []
+    #     for fn in fns:
+    #         # 提取其OR值和prevalence值
+    #         fn_prev = float(
+    #             re.search(r"prev([0-9_]*?)-", fn).group(1).replace("_", ".")
+    #         )
+    #         fn_or = float(
+    #             re.search(r"OR([0-9_]*?)-", fn).group(1).replace("_", ".")
+    #         )
+    #         res_fn = osp.join(save_root, fn)
+    #         with h5py.File(res_fn, "r") as h5:
+    #             g_eva = h5["evaluate"]
+    #             summ_df = summarise_results(
+    #                 g_eva["values"][:],
+    #                 g_eva.attrs["index"],
+    #                 g_eva.attrs["columns"],
+    #             )
+    #         # summ_df = summ_df.loc[[args.summarize_parameter], :]
+    #         summ_df["prev"] = fn_prev
+    #         summ_df["OR"] = fn_or
+    #         all_summ_dfs.append(summ_df)
+    #     all_summ_dfs = pd.concat(all_summ_dfs)
+    #     all_summ_dfs.reset_index(inplace=True, names="parameter")
+    #     all_summ_dfs.set_index(["parameter", "prev", "OR"], inplace=True)
+    #     all_summ_dfs.sort_index(inplace=True)
+    #     print(all_summ_dfs.to_string())
+    #     if args.summarize_save_fn is not None:
+    #         summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
+    #         with pd.ExcelWriter(summ_save_ffn, mode="w") as writer:
+    #             all_summ_dfs.to_excel(writer)
+    #     return
+
+    # for prev_i, or_i in product(args.prevalence, args.OR):
+    #     trial_i = Trials(
+    #         ndraws=1000,
+    #         ntunes=1000,
+    #         nrepeat=args.nrepeat,
+    #         ncores=args.ncores,
+    #         direction=args.direction,
+    #         model_name=args.model,
+    #         solver=args.solver,
+    #         pytensor_cache=osp.expanduser("~/.pytensor/"),
+    #         prevalence=prev_i,
+    #         OR=or_i,
+    #         # do not sample studies
+    #         sigma2_e=(
+    #             args.sigma2e[0] if len(args.sigma2e) == 1 else args.sigma2e
+    #         ),
+    #         sigma2_x=args.sigma2x,
+    #         a=args.a,
+    #         b=args.b,
+    #         # sample studies
+    #         sample_studies=args.sample_studies,
+    #         n_studies=args.n_studies,
+    #         sigma2e_shape=args.sigma2e_shape,
+    #         a_mu=args.a_mu,
+    #         a_sigma=args.a_sigma,
+    #         b_mu=args.b_mu,
+    #         b_sigma=args.b_sigma,
+    #         # other args
+    #         n_sample_per_studies=(
+    #             args.nSamples[0] if len(args.nSamples) == 1 else args.nSamples
+    #         ),
+    #         n_knowX_per_studies=(
+    #             args.nKnowX[0] if len(args.nKnowX) == 1 else args.nKnowX
+    #         ),
+    #         prior_sigma_ws=args.prior_sigma_ws,
+    #         prior_sigma_ab0=args.prior_sigma_ab0,
+    #         prior_betax=args.prior_betax,
+    #         prior_a_std=args.prior_a_std,
+    #         prior_b_std=args.prior_b_std,
+    #         prior_beta0_std=args.prior_beta0_std,
+    #         use_hier_x_prior=not args.direct_x_prior,
+    #         block_size=500,
+    #     )
+    #     if args.tasks == "simulate":
+    #         save_fn = osp.join(
+    #             save_root, "simulate_%s.h5" % trial_i._simul_name
+    #         )
+    #         if osp.exists(save_fn):
+    #             if args.save_action == "raise":
+    #                 raise FileExistsError(save_fn)
+    #             elif args.save_action == "ignore":
+    #                 logger_main.info("%s existed, skip." % save_fn)
+    #                 continue
+    #         arr, cols = trial_i.simulate()
+    #         with h5py.File(save_fn, "w") as h5:
+    #             g_sim = h5.create_group("simulate")
+    #             g_sim.attrs["columns"] = cols
+    #             g_sim.create_dataset("values", data=arr)
+    #     elif args.tasks == "all":
+    #         save_fn = osp.join(save_root, "pipeline_%s.h5" % trial_i._name)
+    #         if osp.exists(save_fn):
+    #             if args.save_action == "raise":
+    #                 raise FileExistsError(save_fn)
+    #             elif args.save_action == "ignore":
+    #                 logger_main.info("%s existed, skip." % save_fn)
+    #                 continue
+    #         (
+    #             (sim_i, sim_col),
+    #             (ana_i, ana_col, ana_ind),
+    #             (eva_i, eva_col, eva_ind),
+    #         ) = trial_i.pipeline()
+    #         with h5py.File(save_fn, "w") as h5:
+    #             g_sim = h5.create_group("simulate")
+    #             g_sim.attrs["columns"] = sim_col
+    #             g_sim.create_dataset("values", data=sim_i)
+    #             g_ana = h5.create_group("analysis")
+    #             g_ana.attrs["columns"] = ana_col
+    #             g_ana.attrs["index"] = ana_ind
+    #             g_ana.create_dataset("values", data=ana_i)
+    #             g_eva = h5.create_group("evaluate")
+    #             g_eva.attrs["columns"] = eva_col
+    #             g_eva.attrs["index"] = eva_ind
+    #             g_eva.create_dataset("values", data=eva_i)
+    #         print(summarise_results(eva_i, eva_ind, eva_col))
 
 
 if __name__ == "__main__":
