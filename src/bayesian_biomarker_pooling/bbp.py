@@ -308,6 +308,11 @@ class BBP:
         seed: int = 0,
     ) -> None:
 
+        assert prior_betax in ["flat", "standard_normal"]
+        assert prior_sigma_ws in ["gamma", "inv_gamma"]
+        assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
+        assert solver in ["pymc", "vi"]
+
         self.prior_betax_ = prior_betax
         self.prior_sigma_ws_ = prior_sigma_ws
         self.prior_sigma_ab0_ = prior_sigma_ab0

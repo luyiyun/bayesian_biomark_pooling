@@ -13,9 +13,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.evaluate import evaluate
-from src.method import SimpleModel, HierachicalModel, HierachicalModel_WX
-from src.simulate import Simulator
+from bayesian_biomarker_pooling import BBP
+from bayesian_biomarker_pooling.simulate import Simulator
 
 # suppress the pymc messages
 logger_pymc = logging.getLogger("pymc")
@@ -33,23 +32,59 @@ ch.setFormatter(formatter)
 logger_main.addHandler(ch)
 
 
+def evaluate(
+    true_params: Dict[str, Union[float, Sequence[float]]],
+    estimate_params: pd.DataFrame,
+    interval_columns: Tuple[str, str] = ("hdi_2.5%", "hdi_97.5%"),
+    name_pairs: Sequence[Tuple[str, str]] = (
+        ("beta1", "betax"),
+        ("a", "a_s"),
+        ("b", "b_s"),
+    ),
+) -> pd.DataFrame:
+    index, true_arr = [], []
+    for k_tp, k_ep in name_pairs:
+        v = true_params[k_tp]
+        if isinstance(v, np.ndarray) and v.ndim == 0:
+            index.append(k_ep)
+            true_arr.append(v.item())
+        elif isinstance(v, (float, int)):
+            index.append(k_ep)
+            true_arr.append(v)
+        elif isinstance(v, (list, tuple, np.ndarray)):
+            index.extend(["%s[%d]" % (k_ep, i) for i in range(len(v))])
+            true_arr.extend(list(v))
+        else:
+            raise TypeError
+    true_arr = np.array(true_arr)
+    estimate_params = estimate_params.loc[index, :]
+
+    bias = estimate_params["mean"].values - true_arr
+    percent_bias = bias / true_arr
+    mse = bias**2
+    cov_rate = np.logical_and(
+        true_arr >= estimate_params.loc[:, interval_columns[0]].values,
+        true_arr <= estimate_params.loc[:, interval_columns[1]].values,
+    ).astype(float)
+
+    return pd.DataFrame(
+        {
+            "bias": bias,
+            "percent_bias": percent_bias,
+            "mse": mse,
+            "cov_rate": cov_rate,
+        },
+        index=index,
+    )
+
+
 def _pipeline(
-    seed: int,
-    simulator: Simulator,
-    model_name: Literal["simple", "hier", "hier_wx"] = "hier",
-    analysis_kwargs: Dict = {},
+    seed: int, simulator: Simulator, analysis_kwargs: Dict = {}
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     sim_dat = simulator.simulate(seed)
     sim_dat["S"] = sim_dat["S"] - 1  # 模拟实验是从1开始的，现在改成0
 
-    if model_name == "simple":
-        model = SimpleModel(seed=seed, **analysis_kwargs)
-    elif model_name == "hier":
-        model = HierachicalModel(seed=seed, **analysis_kwargs)
-    elif model_name == "hier_wx":
-        model = HierachicalModel_WX(seed=seed, **analysis_kwargs)
-    else:
-        raise NotImplementedError
+    model = BBP(seed=seed, **analysis_kwargs)
 
     model.fit(sim_dat)
     baye_res = model.summary()
@@ -79,10 +114,6 @@ class Trials:
         ntunes: int = 1000,
         ncores: int = 1,
         direction: Literal["x->w", "w->x"] = "x->w",
-        model_name: Literal["simple", "hier", "hier_wx"] = "hier",
-        solver: Literal[
-            "pymc", "blackjax", "numpyro", "nutpie", "vi"
-        ] = "pymc",
         pytensor_cache: Optional[str] = None,
         prevalence: float = 0.05,
         OR: float = 1.25,
@@ -99,14 +130,13 @@ class Trials:
         b_sigma: float = 3.0,
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-        prior_betax: Literal["flat", "normal"] = "flat",
+        prior_betax: Literal["flat", "standard_normal"] = "standard_normal",
         prior_a_std: float = 10.0,
         prior_b_std: float = 10.0,
         prior_beta0_std: float = 10.0,
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_balance: bool = False,
-        use_hier_x_prior: bool = True,
         block_size: Optional[int] = None,
     ) -> None:
         self._nrepeat = nrepeat
@@ -142,16 +172,16 @@ class Trials:
                 n_knowX_balance=n_knowX_balance,
             )
         self._analysis_kwargs = dict(
-            solver=solver,
+            prior_betax=prior_betax,
             prior_sigma_ws=prior_sigma_ws,
             prior_sigma_ab0=prior_sigma_ab0,
-            prior_betax=prior_betax,
-            prior_a_std=prior_a_std,
-            prior_b_std=prior_b_std,
-            prior_beta0_std=prior_beta0_std,
+            std_prior_a=prior_a_std,
+            std_prior_b=prior_b_std,
+            std_prior_beta0=prior_beta0_std,
             nsample=ndraws,
             ntunes=ntunes,
-            hier_prior_on_x=use_hier_x_prior,
+            pbar=False,
+            nchains=1,
         )
         self._simul_name = self._simulator.name
         self._trial_name = (
@@ -171,7 +201,6 @@ class Trials:
         ).replace(".", "_")
         self._name = self._trial_name
         self._pytensor_cache = pytensor_cache
-        self._model_name = model_name
 
     def simulate(
         self, nrepeat: Optional[int] = None, ncores: Optional[int] = None
@@ -213,9 +242,7 @@ class Trials:
                     (sim_i, sim_col),
                     (ana_i, ana_col, ana_ind),
                     (eva_i, eva_col, eva_ind),
-                ) = _pipeline(
-                    i, self._simulator, self._model_name, self._analysis_kwargs
-                )
+                ) = _pipeline(i, self._simulator, self._analysis_kwargs)
                 res_simu.append(sim_i)
                 res_anal.append(ana_i)
                 res_eval.append(eva_i)
@@ -241,7 +268,6 @@ class Trials:
                             (
                                 seedi,
                                 self._simulator,
-                                self._model_name,
                                 self._analysis_kwargs,
                             ),
                         )
@@ -336,21 +362,8 @@ def main():
 
     parser.add_argument("--nrepeat", type=int, default=10)
     parser.add_argument("--ncores", type=int, default=1)
-    parser.add_argument(
-        "--model",
-        type=str,
-        choices=["simple", "hier", "hier_wx"],
-        default="hier",
-    )
-    parser.add_argument(
-        "--solver",
-        type=str,
-        choices=["pymc", "blackjax", "numpyro", "nutpie", "vi"],
-        default="pymc",
-    )
 
     # simulation settings
-    # TODO: 使用已经模拟好的数据
     parser.add_argument(
         "--sample_studies",
         action="store_true",
@@ -404,14 +417,12 @@ def main():
     parser.add_argument(
         "--prior_betax",
         type=str,
-        choices=["flat", "normal"],
-        default="flat",
+        choices=["flat", "standard_normal"],
+        default="standard_normal",
     )
-    parser.add_argument("--prior_a_std", type=float, default=10.0)
-    parser.add_argument("--prior_b_std", type=float, default=10.0)
-    parser.add_argument("--prior_beta0_std", type=float, default=10.0)
-    # parser.add_argument("--use_hier_x_prior", action="store_true")
-    parser.add_argument("--direct_x_prior", action="store_true")
+    parser.add_argument("--prior_a_std", type=float, default=1.0)
+    parser.add_argument("--prior_b_std", type=float, default=1.0)
+    parser.add_argument("--prior_beta0_std", type=float, default=1.0)
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
@@ -479,8 +490,6 @@ def main():
             nrepeat=args.nrepeat,
             ncores=args.ncores,
             direction=args.direction,
-            model_name=args.model,
-            solver=args.solver,
             pytensor_cache=osp.expanduser("~/.pytensor/"),
             prevalence=prev_i,
             OR=or_i,
@@ -512,7 +521,6 @@ def main():
             prior_a_std=args.prior_a_std,
             prior_b_std=args.prior_b_std,
             prior_beta0_std=args.prior_beta0_std,
-            use_hier_x_prior=not args.direct_x_prior,
             block_size=500,
         )
         if args.tasks == "simulate":

@@ -9,12 +9,7 @@ version = "0.0.1"
 authors = [{ name = "Rong Zhiwei", email = "18845728185@163.com" }]
 license = { file = "LICENSE" }
 description = "A package for integrated analysis of biomarker clinical trial data."
-keywords = [
-    "statistic",
-    "biomarker",
-    "bayesian",
-    "multiple source integration",
-]
+keywords = ["statistic", "biomarker", "bayesian", "multiple source integration"]
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
@@ -22,31 +17,30 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = [
-    "pymc>=5.10",
-    "numpy>=1.26.2",
-    "scipy>=1.11.4",
-    "pandas>=2.1.1",
-]
-optional-dependencies = { develop = [
+dependencies = ["pymc>=5.10", "numpy>=1.26.2", "scipy>=1.11.4", "pandas>=2.1.1"]
+[project.urls]
+Homepage = "https://github.com/luyiyun/bayesian_biomark_pooling"
+Issues = "https://github.com/luyiyun/bayesian_biomark_pooling/issues"
+[project.optional-dependencies]
+develop = [
     "ipdb>=0.13.13",
     "tqdm>=4.65.0",
     "openpyxl>=3.0.10",
     "seaborn>=0.12.2",
     "build",
-] }
+    "pytest",
+]
+test = ["pytest"]
 
-[project.urls]
-Homepage = "https://github.com/luyiyun/bayesian_biomark_pooling"
-Issues = "https://github.com/luyiyun/bayesian_biomark_pooling/issues"
 
 # -------------------------------- tool --------------------------------
 [tool.setuptools.packages.find]
 # All the following settings are optional:
-where = [
-    "src",
-]
+where = ["src"]
 namespaces = false # true by default, namespaces=false will prevent any folder without an __init__.py file
 
 [tool.setuptools.exclude-package-data]
 mypkg = [".gitignore", "experiments"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
