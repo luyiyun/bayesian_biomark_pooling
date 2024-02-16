@@ -89,7 +89,9 @@ def _pipeline(
     model.fit(sim_dat)
     baye_res = model.summary()
 
-    eval_res = evaluate(simulator.parameters, baye_res)
+    eval_res = evaluate(
+        simulator.parameters, baye_res, name_pairs=[("beta1", "betax")]
+    )
     # 使用ndarray和list会提高多线程的效率
     return (
         (sim_dat.values.astype(float), sim_dat.columns.tolist()),
@@ -299,7 +301,8 @@ class Trials:
                         (res_eval, eva_col, eva_ind),
                     ) = _mp_block(0, nrepeat, bar)
                 else:
-                    n_block = (nrepeat + 1) // self._block_size
+                    # 如果nrepeat < block_size，则需要设置为1
+                    n_block = max((nrepeat + 1) // self._block_size, 1)
                     for bi in range(n_block):
                         _remove_cache(self._pytensor_cache, bar)
                         (
@@ -426,6 +429,8 @@ def main():
     parser.add_argument(
         "--direction", type=str, choices=["w->x", "x->w"], default="x->w"
     )
+    parser.add_argument("--ndraws", type=int, default=1000)
+    parser.add_argument("--ntunes", type=int, default=1000)
     args = parser.parse_args()
 
     save_root = args.save_root
@@ -485,8 +490,8 @@ def main():
 
     for prev_i, or_i in product(args.prevalence, args.OR):
         trial_i = Trials(
-            ndraws=1000,
-            ntunes=1000,
+            ndraws=args.ndraws,
+            ntunes=args.ntunes,
             nrepeat=args.nrepeat,
             ncores=args.ncores,
             direction=args.direction,
