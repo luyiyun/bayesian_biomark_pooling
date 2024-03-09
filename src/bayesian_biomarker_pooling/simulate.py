@@ -1,11 +1,46 @@
 import logging
 import os
-from typing import Literal, Optional, Sequence, Union
+import hashlib
+from collections import abc
+
+from typing import Literal, Optional, Sequence, Union, Tuple, Dict
 
 import numpy as np
 import pandas as pd
-import scipy.stats as ss
+
+# import scipy.stats as ss
 from scipy import integrate, optimize, special, stats
+
+
+def prepare_params_source_heterogeneity(
+    *params: Union[float, Sequence[float]]
+) -> Tuple[Union[None, np.ndarray]]:
+    # 通过某些参数的数量，来确定studies的数量
+    # 同时需要保证这些参数的数量是一致的
+    #  (要么是1, 表示在所有studies中一样, 要么是相同的长度)
+    ns = None
+    for parami in params:
+        if params is None or isinstance(parami, (int, float)):
+            continue
+        len_parami = len(parami)
+        if ns is None:
+            ns = len_parami
+        else:
+            assert ns == len_parami, (
+                "the length of a, b, sigma2_e, "
+                "beta0, beta1 must be one or equal."
+            )
+    ns = 1 if ns is None else ns  # 如果全是scalar，则代表是只有一个source
+
+    res = []
+    for parami in params:
+        if parami is None:
+            res.append(None)
+        elif isinstance(parami, (float, int)):
+            res.append(np.array([parami] * ns))
+        else:
+            res.append(np.array(parami))
+    return tuple(res)
 
 
 def get_beta0_by_prevalence(
@@ -25,131 +60,143 @@ def get_beta0_by_prevalence(
     return res.root
 
 
+def hash_dict(d: Dict) -> str:
+    s = ",".join(
+        [f"{k}:{v}" for k, v in sorted(d.items(), key=lambda x: x[0])]
+    )
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
 class Simulator:
     """可以为每个studies指定不同的样本量、可观测X样本量等。"""
 
-    @classmethod
-    def sample_studies(
-        cls,
-        mu_x: float = 0,
-        sigma2_x: float = 1,
-        OR: float = 1.25,
-        prevalence: Optional[float] = None,
-        n_studies: int = 4,
-        a_mu: float = 0.0,
-        a_sigma: float = 3.0,
-        b_mu: float = 0.0,
-        b_sigma: float = 3.0,
-        sigma2e_shape: float = 1.5,
-        n_sample_per_studies: Union[int, Sequence[int]] = 1000,
-        n_knowX_per_studies: Union[int, Sequence[int]] = 100,
-        n_knowX_balance: bool = False,
-        direction: Literal["x->w", "w->x"] = "x->w",
-        seed: int = 0,
-    ):
-        study_seed = np.random.default_rng(seed)
-        a = study_seed.normal(a_mu, a_sigma, size=n_studies)
-        b = study_seed.normal(b_mu, b_sigma, size=n_studies)
-        sigma2e = ss.invgamma.rvs(
-            sigma2e_shape, size=n_studies, random_state=study_seed
-        )
-        return cls(
-            mu_x=mu_x,
-            sigma2_x=sigma2_x,
-            OR=OR,
-            prevalence=prevalence,
-            a=a,
-            b=b,
-            sigma2_e=sigma2e,
-            n_sample_per_studies=n_sample_per_studies,
-            n_knowX_per_studies=n_knowX_per_studies,
-            n_knowX_balance=n_knowX_balance,
-            direction=direction,
-        )
+    # @classmethod
+    # def sample_studies(
+    #     cls,
+    #     mu_x: float = 0,
+    #     sigma2_x: float = 1,
+    #     OR: float = 1.25,
+    #     prevalence: Optional[float] = None,
+    #     n_studies: int = 4,
+    #     a_mu: float = 0.0,
+    #     a_sigma: float = 3.0,
+    #     b_mu: float = 0.0,
+    #     b_sigma: float = 3.0,
+    #     sigma2e_shape: float = 1.5,
+    #     n_sample_per_studies: Union[int, Sequence[int]] = 1000,
+    #     n_knowX_per_studies: Union[int, Sequence[int]] = 100,
+    #     n_knowX_balance: bool = False,
+    #     direction: Literal["x->w", "w->x"] = "x->w",
+    #     seed: int = 0,
+    # ):
+    #     study_seed = np.random.default_rng(seed)
+    #     a = study_seed.normal(a_mu, a_sigma, size=n_studies)
+    #     b = study_seed.normal(b_mu, b_sigma, size=n_studies)
+    #     sigma2e = ss.invgamma.rvs(
+    #         sigma2e_shape, size=n_studies, random_state=study_seed
+    #     )
+    #     return cls(
+    #         mu_x=mu_x,
+    #         sigma2_x=sigma2_x,
+    #         OR=OR,
+    #         prevalence=prevalence,
+    #         a=a,
+    #         b=b,
+    #         sigma2_e=sigma2e,
+    #         n_sample_per_studies=n_sample_per_studies,
+    #         n_knowX_per_studies=n_knowX_per_studies,
+    #         n_knowX_balance=n_knowX_balance,
+    #         direction=direction,
+    #     )
 
     def __init__(
         self,
-        mu_x: float = 0,
-        sigma2_x: float = 1,
-        OR: float = 1.25,
+        mu_x: float = 0.0,
+        sigma2_x: float = 1.0,
+        beta_x: float = 1.0,
+        beta_z: Optional[Union[float, Sequence[float]]] = None,
+        mu_z: Union[float, Sequence[float]] = 0.0,
+        sigma_z: Union[float, Sequence[float]] = 1.0,
         prevalence: Optional[float] = None,
-        beta0: Union[float, Sequence[float]] = 1.0,
+        beta_0: Union[float, Sequence[float]] = 1.0,
         a: Sequence[float] = [-3, 1, -1, 3],
         b: Sequence[float] = [0.5, 0.75, 1.25, 1.5],
         sigma2_e: Union[float, Sequence[float]] = 1.0,
+        sigma2_y: Union[float, Sequence[float]] = 1.0,
         n_sample_per_studies: Union[int, Sequence[int]] = 1000,
         n_knowX_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_balance: bool = False,
         direction: Literal["x->w", "w->x"] = "x->w",
+        type_outcome: Literal["binary", "continue"] = "binary",
     ) -> None:
         assert direction in ["x->w", "w->x"]
-        logger = logging.getLogger("main.simulate")
+        assert type_outcome in ["binary", "continue"]
+        if type_outcome == "continue":
+            assert beta_0 is not None
+        if beta_z is not None and isinstance(mu_z, abc.Sequence):
+            assert len(beta_z) == len(mu_z)
+        if beta_z is not None and isinstance(sigma_z, abc.Sequence):
+            assert len(beta_z) == len(mu_z)
 
-        # 使用OR值来确定beta1
-        beta1 = np.log(OR)
+        logger = logging.getLogger("main.simulate")
 
         # 如果指定了prevalence，则使用prevalence来计算beta0，beta0在所有
         # studies中都是一样的
-        if prevalence is not None:
+        if type_outcome == "binary" and prevalence is not None:
             # compute the suitable beta0 to produce necessary prevalence
-            beta0 = get_beta0_by_prevalence(prevalence, beta1, mu_x, sigma2_x)
+            beta_0 = get_beta0_by_prevalence(
+                prevalence, beta_x, mu_x, sigma2_x
+            )
             logger.info(
-                "(pid:%d)Get the beta0 = %.4f by prevalence %.4f"
-                % (os.getpid(), beta0, prevalence)
+                f"(pid:{os.getpid()})Get the beta0 = {beta_0:.4f} "
+                f"by prevalence {prevalence:.4f}"
             )
 
         # 通过某些参数的数量，来确定studies的数量
         # 同时需要保证这些参数的数量是一致的
         #  (要么是1, 表示在所有studies中一样, 要么是相同的长度)
-        params_may_multiple = [
-            beta0,
+        (
+            beta_0,
             a,
             b,
             sigma2_e,
+            sigma2_y,
             n_sample_per_studies,
             n_knowX_per_studies,
-        ]
-        ns = None
-        for parami in params_may_multiple:
-            if isinstance(parami, (int, float)):
-                continue
-            len_parami = len(parami)
-            if ns is None:
-                ns = len_parami
-            else:
-                assert ns == len_parami, (
-                    "the length of a, b, sigma2_e, "
-                    "beta0, beta1 must be one or equal."
-                )
-        if ns is None:
-            raise ValueError(
-                "the number of studies can not be "
-                "identified by simulation settings."
-            )
-
-        beta0, a, b, sigma2_e, n_sample_per_studies, n_knowX_per_studies = [
-            np.array([x] * ns) if isinstance(x, (float, int)) else np.array(x)
-            for x in params_may_multiple
-        ]
+        ) = prepare_params_source_heterogeneity(
+            beta_0,
+            a,
+            b,
+            sigma2_e,
+            sigma2_y,
+            n_sample_per_studies,
+            n_knowX_per_studies,
+        )
 
         self._parameters = {
             "mu_x": mu_x,
             "sigma2_x": sigma2_x,
             "sigma_x": np.sqrt(sigma2_x),
-            "OR": OR,
-            "beta1": beta1,
-            "beta0": beta0,
+            "sigma2_y": sigma2_y,
+            "sigma_y": np.sqrt(sigma2_y),
+            "beta_x": beta_x,
+            "beta_0": beta_0,
+            "beta_z": beta_z,
             "a": a,
             "b": b,
             "sigma2_e": sigma2_e,
             "sigma_e": np.sqrt(sigma2_e),
+            "mu_z": mu_z,
+            "sigma_z": sigma_z,
             "n_sample_per_studies": n_sample_per_studies,
             "n_knowX_per_studies": n_knowX_per_studies,
-            "n_studies": ns,
+            "n_studies": len(beta_0),
             "direction": direction,
             "n_samples": np.sum(n_sample_per_studies),
             "n_knowX_balance": n_knowX_balance,
+            "type_outcome": type_outcome,
         }
+        self._typ_outcome = type_outcome
 
         if direction == "w->x":
             mu_w = (mu_x - a) / b
@@ -163,7 +210,8 @@ class Simulator:
                 }
             )
 
-        self._name = ("prev%.2f-OR%.2f" % (prevalence, OR)).replace(".", "_")
+        # self._name = f"prev{prevalence:.2f}-betax{beta_x:.2f}"
+        self._name = hash_dict(self._parameters)
 
     @property
     def parameters(self):
@@ -173,7 +221,7 @@ class Simulator:
     def name(self):
         return self._name
 
-    def simulate(self, seed: int):
+    def simulate(self, seed: Optional[int] = None):
         rng = np.random.default_rng(seed)
 
         Ns = self._parameters["n_sample_per_studies"]
@@ -196,10 +244,23 @@ class Simulator:
             )
             W = a + b * X + e
 
-        beta0 = np.repeat(self._parameters["beta0"], Ns)
-        logit = self._parameters["beta1"] * X + beta0
-        p = 1 / (np.exp(-logit) + 1)
-        Y = rng.binomial(1, p)
+        beta0 = np.repeat(self._parameters["beta_0"], Ns)
+        logit = self._parameters["beta_x"] * X + beta0
+        if self._parameters["beta_z"] is not None:
+            Z = rng.normal(
+                self._parameters["mu_z"],
+                self._parameters["sigma_z"],
+                size=(np.sum(Ns), len(self._parameters["beta_z"])),
+            )
+            zint = (np.array(self._parameters["beta_z"]) * Z).sum(axis=1)
+            logit += zint
+
+        if self._typ_outcome == "continue":
+            sigma_y = np.repeat(self._parameters["sigma_y"], Ns)
+            Y = rng.normal(logit, sigma_y)
+        elif self._typ_outcome == "binary":
+            p = 1 / (np.exp(-logit) + 1)
+            Y = rng.binomial(1, p)
 
         X_obs = X.copy()
         start = 0
@@ -240,4 +301,14 @@ class Simulator:
                 "H": ~np.isnan(X_obs),
             }
         )
+        if self._parameters["beta_z"] is not None:
+            res = pd.concat(
+                [
+                    res,
+                    pd.DataFrame(
+                        Z, columns=[f"Z{i+1}" for i in range(Z.shape[1])]
+                    ),
+                ],
+                axis=1,
+            )
         return res
