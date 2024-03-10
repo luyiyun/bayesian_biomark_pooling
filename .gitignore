@@ -2,4 +2,4 @@
 results/*
 experiments/results/
 *.ipynb
-**/bayesian_biomarker_pooling.egg-info/
+**/*.egg-info/
