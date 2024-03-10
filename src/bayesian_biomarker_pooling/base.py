@@ -45,13 +45,13 @@ def check_split_data(
 
     XWYZ_xKnow, WYZ_xUnKnow = {}, {}
     for si in ind_studies:
-        ind_si = (ind_studies == si) & ind_xKnow
+        ind_si = (S == si) & ind_xKnow
         if ind_si.sum() > 0:
             XWYZ_xKnow[si] = {"X": X[ind_si], "W": W[ind_si], "Y": Y[ind_si]}
             if Z is not None:
                 XWYZ_xKnow[si]["Z"] = Z[ind_si, :]
 
-        ind_si_n = (ind_studies == si) & ind_xUnKnow
+        ind_si_n = (S == si) & ind_xUnKnow
         if ind_si_n.sum() > 0:
             WYZ_xUnKnow[si] = {"W": W[ind_si_n], "Y": Y[ind_si_n]}
             if Z is not None:

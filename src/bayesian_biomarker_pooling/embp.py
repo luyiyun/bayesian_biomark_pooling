@@ -8,6 +8,7 @@ class EMBP(BiomarkerPoolBase):
         pass
 
     def fit(
+        self,
         X: ndarray,
         S: ndarray,
         W: ndarray,
@@ -15,6 +16,7 @@ class EMBP(BiomarkerPoolBase):
         Z: ndarray | None = None,
     ) -> None:
         dats = check_split_data(X, S, W, Y, Z)
+        print(dats)
 
         # 1. 使用OLS得到初始值
 
