@@ -1,10 +1,10 @@
 import logging
-from typing import Literal, List
+from typing import Literal
 
 import pandas as pd
 import numpy as np
 from scipy.special import expit, log_expit, softmax
-from scipy.stats import norm, rv_continuous, multivariate_normal
+from scipy.stats import norm, rv_continuous
 
 # import pandas as pd
 from numpy import ndarray
@@ -12,9 +12,9 @@ from .base import BiomarkerPoolBase, check_split_data
 
 
 logger = logging.getLogger("EMBP")
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.WARNING)
 ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
+ch.setLevel(logging.WARNING)
 formatter = logging.Formatter(
     "[%(name)s][%(levelname)s][%(asctime)s]:%(message)s"
 )
