@@ -5,6 +5,8 @@ import pandas as pd
 import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm, rv_continuous
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
 
 # import pandas as pd
 from numpy import ndarray
@@ -26,145 +28,33 @@ def ols(x_des, y) -> np.ndarray:
     return np.linalg.inv(x_des.T @ x_des) @ x_des.T @ y
 
 
-def init_continue(
-    Xo: ndarray, Yo: ndarray, Zo: ndarray | None, XWYZ_xKnow: list
-):
-    mu_x = Xo.mean()
-    sigma2_x = np.var(Xo, ddof=1)
+# def calc_xhat(params: dict, WYZ_xUnKnow: list) -> dict:
+#     sigma2 = 1 / (
+#         params["beta_x"] ** 2 / params["sigma2_y"]
+#         + params["b"] ** 2 / params["sigma2_w"]
+#         + 1 / params["sigma2_x"]
+#     )
 
-    Xo_des = [np.ones((Xo.shape[0], 1)), Xo[:, None]]
-    if Zo is not None:
-        Xo_des.append(Zo)
-    Xo_des = np.concatenate(Xo_des, axis=1)
-    beta = ols(Xo_des, Yo)
-    sigma2_ys = np.mean((Yo - Xo_des @ beta) ** 2)
+#     xhat, xhat2 = [], []
+#     for i, item in enumerate(WYZ_xUnKnow):
+#         if item is None:
+#             xhat.append(np.array([]))
+#             xhat2.append(np.array([]))
+#             continue
 
-    a, b, sigma2_w = [], [], []
-    for item in XWYZ_xKnow:
-        if item is None:
-            a.append(0)
-            b.append(0)
-            sigma2_w.append(1)
-            continue
-        Xi, Wi = item[1:3]
-        Xi_des = np.stack([np.ones(Xi.shape[0]), Xi], axis=1)
-        abi = ols(Xi_des, Wi)
-        sigma2_ws_i = np.mean((Wi - Xi_des @ abi) ** 2)
-        a.append(abi[0])
-        b.append(abi[1])
-        sigma2_w.append(sigma2_ws_i)
+#         Wi, Yi, Zi = item[1:]
+#         residual_yi = Yi - params["beta_0"][i]
+#         if Zi is not None:
+#             residual_yi -= Zi @ params["beta_z"]
+#         e_s = (
+#             residual_yi * params["beta_x"] / params["sigma2_y"][i]
+#             + (Wi - params["a"][i]) * params["b"][i] / params["sigma2_w"][i]
+#             + params["mu_x"] / params["sigma2_x"]
+#         )
+#         xhat.append(e_s * sigma2[i])
+#         xhat2.append((e_s * sigma2[i]) ** 2 + sigma2[i])
 
-    ns = len(XWYZ_xKnow)
-
-    params = {
-        "mu_x": mu_x,
-        "sigma2_x": sigma2_x,
-        "beta_0": np.full(ns, beta[0]),
-        "beta_x": beta[1],
-        "sigma2_y": np.full(ns, sigma2_ys),
-        "a": np.array(a),
-        "b": np.array(b),
-        "sigma2_w": np.array(sigma2_w),
-    }
-    if Zo is not None:
-        params["beta_z"] = beta[2:]
-
-    return params
-
-
-def calc_xhat(params: dict, WYZ_xUnKnow: list) -> dict:
-    sigma2 = 1 / (
-        params["beta_x"] ** 2 / params["sigma2_y"]
-        + params["b"] ** 2 / params["sigma2_w"]
-        + 1 / params["sigma2_x"]
-    )
-
-    xhat, xhat2 = [], []
-    for i, item in enumerate(WYZ_xUnKnow):
-        if item is None:
-            xhat.append(np.array([]))
-            xhat2.append(np.array([]))
-            continue
-
-        Wi, Yi, Zi = item[1:]
-        residual_yi = Yi - params["beta_0"][i]
-        if Zi is not None:
-            residual_yi -= Zi @ params["beta_z"]
-        e_s = (
-            residual_yi * params["beta_x"] / params["sigma2_y"][i]
-            + (Wi - params["a"][i]) * params["b"][i] / params["sigma2_w"][i]
-            + params["mu_x"] / params["sigma2_x"]
-        )
-        xhat.append(e_s * sigma2[i])
-        xhat2.append((e_s * sigma2[i]) ** 2 + sigma2[i])
-
-    return {"sigma2": sigma2, "xhat": xhat, "xhat2": xhat2}
-
-
-def iter_calc_params(
-    Y,
-    Z,
-    Xhat,
-    Xhat2,
-    sigma2,
-    ind_s,
-    ind_s_inv,
-    n_ms,
-    n_s,
-    beta_x,
-    beta_0,
-    beta_z,
-    sigma2_y,
-    thre: float = 1e-5,
-    max_iter: int = 100,
-):
-
-    for iter_i in range(max_iter):
-        # update beta_x
-        beta_0_long = beta_0[ind_s_inv]
-        sigma2_y_long = sigma2_y[ind_s_inv]
-        z_part = Z @ beta_z if Z is not None else 0
-        resid_betax = (Y - beta_0_long - z_part) * Xhat / sigma2_y_long
-        beta_x_new = resid_betax.mean() / (Xhat2 / sigma2_y_long).mean()
-        resid_beta0 = Y - z_part - beta_x_new * Xhat
-        beta_0_new = np.array([resid_beta0[indi].mean() for indi in ind_s])
-
-        if Z is not None:
-            resid_z = (
-                Y - beta_0_new[ind_s_inv] - beta_x_new * Xhat
-            ) / sigma2_y_long
-            beta_z_new = (
-                np.linalg.inv(Z.T @ np.diag(sigma2_y_long) @ Z) @ Z.T @ resid_z
-            )
-            z_part = Z @ beta_z_new
-
-        resid_sigma_2 = (
-            Y - beta_0_new[ind_s_inv] - beta_x_new * Xhat - z_part
-        ) ** 2
-        sigma2_y_new = np.array(
-            [resid_sigma_2[ind_si].mean() for ind_si in ind_s]
-        )
-        sigma2_y_new += n_ms * beta_x_new**2 * sigma2 / n_s
-
-        diff = np.r_[
-            beta_x_new - beta_x, beta_0_new - beta_0, sigma2_y_new - sigma2_y
-        ]
-        if Z is not None:
-            diff = np.r_[diff, beta_z_new - beta_z]
-        diff = np.max(np.abs(diff))
-        logger.info(f"Inner iteration {iter_i+1}: difference is {diff: .4f}")
-
-        beta_x = beta_x_new
-        beta_0 = beta_0_new
-        sigma2_y = sigma2_y_new
-        if Z is not None:
-            beta_z = beta_z_new
-
-        if diff < thre:
-            logger.info(f"Inner iteration stop: difference is {diff: .4f}")
-            break
-
-    return beta_x, beta_0, sigma2_y, beta_z
+#     return {"sigma2": sigma2, "xhat": xhat, "xhat2": xhat2}
 
 
 def logistic(
@@ -330,6 +220,316 @@ def newton_raphson_beta(
     return beta_
 
 
+class EM:
+
+    def __init__(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+        max_iter: int = 100,
+        thre: float = 1e-5,
+        max_iter_inner: int = 100,
+        thre_inner: float = 1e-7,
+    ) -> None:
+        self._X = X
+        self._S = S
+        self._W = W
+        self._Y = Y
+        self._Z = Z
+
+        self._max_iter = max_iter
+        self._thre = thre
+        self._max_iter_inner = max_iter_inner
+        self._thre_inner = thre_inner
+
+    def prepare(self):
+        """
+        准备一些在后续步骤中会用到的array
+        """
+        raise NotImplementedError
+
+    def init(self) -> dict:
+        """初始化参数
+
+        Returns:
+            dict: 参数组成的dict
+        """
+        raise NotImplementedError
+
+    def e_step(self, params: dict):
+        """Expectation step
+
+        从EM算法的定义上，是计算log joint likelihood的后验期望，也就是Q function。
+        但是，在code中一般不是计算这个，而是计算Q function中关于后验期望的部分，
+        以便于后面的m step。
+        """
+        raise NotImplementedError
+
+    def m_step(self, params: dict) -> dict:
+        raise NotImplementedError
+
+    def calc_diff(self, params_old: dict, params_new: dict) -> float:
+        diff = []
+        for k, v in params_new.items():
+            if v is None:
+                continue
+            diffk = params_old[k] - v
+            if isinstance(diffk, float):
+                diffk = np.array([diffk])
+            diff.append(diffk)
+        diff = np.concatenate(diff)
+        return np.max(np.abs(diff))
+
+    def run(self, pbar: bool = True):
+        self.prepare()
+        params = self.init()
+        with logging_redirect_tqdm(loggers=[logger]):
+            for iter_i in tqdm(
+                range(1, self._max_iter + 1), desc="EM: ", disable=not pbar
+            ):
+
+                self.e_step(params)
+                params_new = self.m_step(params)
+                diff = self.calc_diff(params, params_new)
+                logger.info(
+                    f"EM iteration {iter_i}: difference is {diff: .4f}"
+                )
+                params = params_new  # 更新
+                if diff < self._thre:
+                    break
+            else:
+                logger.warning(
+                    f"EM iteration (max_iter={self._max_iter}) "
+                    "doesn't converge"
+                )
+
+        self.params_ = params
+
+
+class ContinueEM(EM):
+
+    def prepare(self):
+        # 准备后悔步骤中会用到的array，预先计算，节省效率
+        self._n = self._Y.shape[0]
+        self._studies, self._ind_inv = np.unique(self._S, return_inverse=True)
+        self._is_m = pd.isnull(self._X)
+        self._is_o = ~self._is_m
+        self._ns = len(self._studies)
+        self._n_o = self._is_o.sum()
+        self._n_m = self._is_m.sum()
+
+        self._Xo = self._X[self._is_o]
+        self._Yo = self._Y[self._is_o]
+        self._Wo = self._W[self._is_o]
+        self._Xm = self._X[self._is_m]
+        self._Ym = self._Y[self._is_m]
+        self._Wm = self._W[self._is_m]
+        if self._Z is not None:
+            self._Zo = self._Z[self._is_o, :]
+            self._Zm = self._Z[self._is_m, :]
+
+        self._ind_S = [np.nonzero(self._S == s)[0] for s in self._studies]
+        self._ind_Sm = [
+            np.nonzero((self._S == s) & self._is_m)[0] for s in self._studies
+        ]
+        self._ind_So = [
+            np.nonzero((self._S == s) & self._is_o)[0] for s in self._studies
+        ]
+        self._ind_m_inv = self._ind_inv[self._is_m]
+
+        self._n_s = np.array([len(indi) for indi in self._ind_S])
+        self._n_ms = np.array([len(indi) for indi in self._ind_Sm])
+        # self._ind_Sm_inv = [self._ind_inv[is_i] for is_i in self._ind_Sm]
+
+        self._wbar_s = np.array([np.mean(self._W[ind]) for ind in self._ind_S])
+        self._wwbar_s = np.array(
+            [np.mean(self._W[ind] ** 2) for ind in self._ind_S]
+        )
+        # dats = check_split_data(X, S, W, Y, Z)
+        # ind_o = dats["ind_o"]
+        # ind_s = dats["ind_s"]
+        # ind_s_inv = dats["ind_s_inv"]
+        # n_ms, n_os = dats["n_ms"], dats["n_os"]
+        # n_s = n_ms + n_os
+
+        self._Xhat = np.copy(self._X)
+        self._Xhat2 = self._Xhat**2
+
+    def init(self) -> dict:
+        # 初始化权重
+        mu_x = self._Xo.mean()
+        sigma2_x = np.var(self._Xo, ddof=1)
+
+        Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
+        if self._Z is not None:
+            Xo_des.append(self._Zo)
+        Xo_des = np.concatenate(Xo_des, axis=1)
+        beta = ols(Xo_des, self._Yo)
+        sigma2_ys = np.mean((self._Yo - Xo_des @ beta) ** 2)
+
+        a, b, sigma2_w = [], [], []
+        for ind_so_i in self._ind_So:
+            if len(ind_so_i) == 0:
+                a.append(0)
+                b.append(0)
+                sigma2_w.append(1)
+                continue
+
+            Xi, Wi = self._X[ind_so_i], self._W[ind_so_i]
+            Xi_des = np.stack([np.ones(Xi.shape[0]), Xi], axis=1)
+            abi = ols(Xi_des, Wi)
+            sigma2_ws_i = np.mean((Wi - Xi_des @ abi) ** 2)
+            a.append(abi[0])
+            b.append(abi[1])
+            sigma2_w.append(sigma2_ws_i)
+
+        return {
+            "mu_x": mu_x,
+            "sigma2_x": sigma2_x,
+            "beta_0": np.full(self._ns, beta[0]),
+            "beta_x": beta[1],
+            "sigma2_y": np.full(self._ns, sigma2_ys),
+            "a": np.array(a),
+            "b": np.array(b),
+            "sigma2_w": np.array(sigma2_w),
+            "beta_z": None if self._Z is None else beta[2:],
+        }
+
+    def e_step(self, params: dict):
+        self._sigma2 = 1 / (
+            params["beta_x"] ** 2 / params["sigma2_y"]
+            + params["b"] ** 2 / params["sigma2_w"]
+            + 1 / params["sigma2_x"]
+        )  # 最后在迭代计算sigma2_y的时候还会用到
+        z_m_part = 0.0 if self._Z is None else self._Zm @ params["beta_z"]
+        beta_0_m_long = params["beta_0"][self._ind_m_inv]
+        sigma2_y_m_long = params["sigma2_y"][self._ind_m_inv]
+        a_m_long = params["a"][self._ind_m_inv]
+        b_m_long = params["b"][self._ind_m_inv]
+        sigma2_w_m_long = params["sigma2_w"][self._ind_m_inv]
+        sigma2_m_long = self._sigma2[self._ind_m_inv]
+
+        xhat_m = (
+            (self._Ym - beta_0_m_long - z_m_part)
+            * params["beta_x"]
+            / sigma2_y_m_long
+            + (self._Wm - a_m_long) * b_m_long / sigma2_w_m_long
+            + params["mu_x"] / params["sigma2_x"]
+        ) * sigma2_m_long
+
+        self._Xhat[self._is_m] = xhat_m
+        self._Xhat2[self._is_m] = xhat_m**2 + sigma2_m_long
+
+    def m_step(self, params: dict) -> dict:
+        vbar = self._Xhat2.mean()
+        wxbar_s = np.array(
+            [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
+        )
+        vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
+        xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
+
+        # 3. M step，更新参数值
+        mu_x = np.mean(self._Xhat)
+        sigma2_x = vbar - mu_x**2
+        b = (wxbar_s - self._wbar_s * xbar_s) / (vbar_s - xbar_s**2)
+        a = self._wbar_s - b * xbar_s
+        sigma2_w = (
+            self._wwbar_s
+            + a**2
+            + b**2 * vbar_s
+            - 2 * (a * self._wbar_s + b * wxbar_s - a * b * xbar_s)
+        )
+        beta_x, beta_0, sigma2_y, beta_z = self.iter_calc_params(
+            params["beta_x"],
+            params["beta_0"],
+            params["sigma2_y"],
+            params["beta_z"],
+        )
+
+        return {
+            "mu_x": mu_x,
+            "sigma2_x": sigma2_x,
+            "a": a,
+            "b": b,
+            "sigma2_w": sigma2_w,
+            "beta_x": beta_x,
+            "beta_0": beta_0,
+            "sigma2_y": sigma2_y,
+            "beta_z": beta_z,
+        }
+
+    def iter_calc_params(
+        self,
+        beta_x: float,
+        beta_0: ndarray,
+        sigma2_y: ndarray,
+        beta_z: ndarray | None,
+    ) -> tuple:
+
+        for iter_i in range(1, self._max_iter_inner + 1):
+            # 1. update beta_x
+            beta_0_long = beta_0[self._ind_inv]
+            sigma2_y_long = sigma2_y[self._ind_inv]
+            z_part = self._Z @ beta_z if self._Z is not None else 0
+            beta_x_new = (
+                (self._Y - beta_0_long - z_part) * self._Xhat / sigma2_y_long
+            ).mean() / (self._Xhat2 / sigma2_y_long).mean()
+            # 2. update beta_0
+            resid_beta0 = self._Y - z_part - beta_x_new * self._Xhat
+            beta_0_new = np.array(
+                [resid_beta0[indi].mean() for indi in self._ind_S]
+            )
+            # 3. update sigma2_y
+            beta_0_long = beta_0_new[self._ind_inv]
+            resid_sigma_2 = (
+                self._Y - beta_0_long - beta_x_new * self._Xhat - z_part
+            ) ** 2
+            sigma2_y_new = np.array(
+                [resid_sigma_2[ind_si].mean() for ind_si in self._ind_S]
+            )
+            sigma2_y_new += (
+                self._n_ms * beta_x_new**2 * self._sigma2 / self._n_s
+            )
+            # 4. update beta_z
+            if self._Z is not None:
+                sigma2_y_long = sigma2_y_new[self._ind_inv]
+                resid_z = (
+                    self._Y - beta_0_long - beta_x_new * self._Xhat
+                ) / sigma2_y_long
+                beta_z_new = (
+                    np.linalg.inv((self._Z.T * sigma2_y_long) @ self._Z)
+                    @ self._Z.T
+                    @ resid_z
+                )
+
+            # calc diff
+            diff = np.r_[
+                beta_x_new - beta_x,
+                beta_0_new - beta_0,
+                sigma2_y_new - sigma2_y,
+            ]
+            if self._Z is not None:
+                diff = np.r_[diff, beta_z_new - beta_z]
+            diff = np.max(np.abs(diff))
+
+            logger.info(f"Inner iteration {iter_i}: difference is {diff: .4f}")
+
+            beta_x = beta_x_new
+            beta_0 = beta_0_new
+            sigma2_y = sigma2_y_new
+            if self._Z is not None:
+                beta_z = beta_z_new
+
+            if diff < self._thre_inner:
+                logger.info(f"Inner iteration stop, stop iter: {iter_i}")
+                break
+
+        return beta_x, beta_0, sigma2_y, beta_z
+
+
 # TODO: 控制一下内部的Newton-Raphson的max_iter和thre
 class EMBP(BiomarkerPoolBase):
 
@@ -342,6 +542,7 @@ class EMBP(BiomarkerPoolBase):
         max_iter_inner: int = 100,
         nsample_IS: int = 10000,
         lr: float = 1.0,
+        pbar: bool = True,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
 
@@ -352,6 +553,7 @@ class EMBP(BiomarkerPoolBase):
         self.max_iter_inner_ = max_iter_inner
         self.nsample_IS_ = nsample_IS
         self.lr_ = lr
+        self.pbar_ = pbar
 
     def fit(
         self,
@@ -362,126 +564,139 @@ class EMBP(BiomarkerPoolBase):
         Z: ndarray | None = None,
     ) -> None:
         if self.outcome_type_ == "continue":
-            self._fit_continue(X, S, W, Y, Z)
+            estimator = ContinueEM(
+                X,
+                S,
+                W,
+                Y,
+                Z,
+                self.max_iter_,
+                self.thre_,
+                self.max_iter_inner_,
+                self.thre_inner_,
+            )
+            estimator.run(self.pbar_)
         elif self.outcome_type_ == "binary":
             self._fit_binary(X, S, W, Y, Z)
         else:
             raise NotImplementedError
 
-    def _fit_continue(
-        self,
-        X: ndarray,
-        S: ndarray,
-        W: ndarray,
-        Y: ndarray,
-        Z: ndarray | None = None,
-    ) -> None:
-        n = X.shape[0]
-        dats = check_split_data(X, S, W, Y, Z)
-        ind_o = dats["ind_o"]
-        ind_s = dats["ind_s"]
-        ind_s_inv = dats["ind_s_inv"]
-        n_ms, n_os = dats["n_ms"], dats["n_os"]
-        n_s = n_ms + n_os
+        self.params_ = estimator.params_
 
-        Xhat = np.copy(X)
-        Xhat2 = Xhat**2
+    # def _fit_continue(
+    #     self,
+    #     X: ndarray,
+    #     S: ndarray,
+    #     W: ndarray,
+    #     Y: ndarray,
+    #     Z: ndarray | None = None,
+    # ) -> None:
+    #     n = X.shape[0]
+    #     dats = check_split_data(X, S, W, Y, Z)
+    #     ind_o = dats["ind_o"]
+    #     ind_s = dats["ind_s"]
+    #     ind_s_inv = dats["ind_s_inv"]
+    #     n_ms, n_os = dats["n_ms"], dats["n_os"]
+    #     n_s = n_ms + n_os
 
-        # 1. 使用OLS得到初始值
-        params = init_continue(
-            X[ind_o],
-            Y[ind_o],
-            None if Z is None else Z[ind_o, :],
-            dats["XWYZ_xKnow"],
-        )
+    #     Xhat = np.copy(X)
+    #     Xhat2 = Xhat**2
 
-        for iter_i in range(self.max_iter_):
+    #     # 1. 使用OLS得到初始值
+    #     params = init_continue(
+    #         X[ind_o],
+    #         Y[ind_o],
+    #         None if Z is None else Z[ind_o, :],
+    #         dats["XWYZ_xKnow"],
+    #     )
 
-            # 2. E step, 计算hat x
-            E_res = calc_xhat(params, dats["WYZ_xUnKnow"])
-            sigma2 = E_res["sigma2"]
-            for xhat_m, xhat2_m, item in zip(
-                E_res["xhat"], E_res["xhat2"], dats["WYZ_xUnKnow"]
-            ):
-                if item is None:
-                    continue
-                ind_m_s = item[0]
-                Xhat[ind_m_s] = xhat_m
-                Xhat2[ind_m_s] = xhat2_m
+    #     for iter_i in range(self.max_iter_):
 
-            # 3. M step，更新参数值
-            mu_x = np.mean(Xhat)
-            sigma2_x = np.mean((Xhat - mu_x) ** 2) + np.sum(sigma2 * n_s / n)
-            a, b, sigma2_w = [], [], []
-            for i, ind_si in enumerate(ind_s):
-                wsi, xsi, x2si = W[ind_si], Xhat[ind_si], Xhat2[ind_si]
-                wsi_ = wsi.mean()
-                xsi_ = xsi.mean()
-                x2si_ = x2si.mean()
+    #         # 2. E step, 计算hat x
+    #         E_res = calc_xhat(params, dats["WYZ_xUnKnow"])
+    #         sigma2 = E_res["sigma2"]
+    #         for xhat_m, xhat2_m, item in zip(
+    #             E_res["xhat"], E_res["xhat2"], dats["WYZ_xUnKnow"]
+    #         ):
+    #             if item is None:
+    #                 continue
+    #             ind_m_s = item[0]
+    #             Xhat[ind_m_s] = xhat_m
+    #             Xhat2[ind_m_s] = xhat2_m
 
-                bsi = ((wsi * xsi).mean() - wsi_ * xsi_) / (x2si_ - xsi_**2)
-                resid = wsi - bsi * xsi
-                asi = np.mean(resid)
-                sigma2_wsi = np.mean((resid - asi) ** 2)
-                b.append(bsi)
-                a.append(asi)
-                sigma2_w.append(sigma2_wsi)
-            a, b, sigma2_w = np.array(a), np.array(b), np.array(sigma2_w)
-            sigma2_w += b**2 * sigma2 * n_ms / n_s
+    #         # 3. M step，更新参数值
+    #         mu_x = np.mean(Xhat)
+    #         sigma2_x = np.mean((Xhat - mu_x) ** 2) + np.sum(sigma2 * n_s / n)
+    #         a, b, sigma2_w = [], [], []
+    #         for i, ind_si in enumerate(ind_s):
+    #             wsi, xsi, x2si = W[ind_si], Xhat[ind_si], Xhat2[ind_si]
+    #             wsi_ = wsi.mean()
+    #             xsi_ = xsi.mean()
+    #             x2si_ = x2si.mean()
 
-            # 迭代法求解剩余的参数
-            beta_x, beta_0, sigma2_y, beta_z = iter_calc_params(
-                Y=Y,
-                Z=Z,
-                Xhat=Xhat,
-                Xhat2=Xhat2,
-                sigma2=sigma2,
-                ind_s=ind_s,
-                ind_s_inv=ind_s_inv,
-                n_ms=n_ms,
-                n_s=n_s,
-                beta_x=params["beta_x"],
-                beta_0=params["beta_0"],
-                beta_z=params.get("beta_z", 0),
-                sigma2_y=params["sigma2_y"],
-                thre=self.thre_inner_,
-                max_iter=self.max_iter_inner_,
-            )
+    #             bsi = ((wsi * xsi).mean() - wsi_ * xsi_) / (x2si_ - xsi_**2)
+    #             resid = wsi - bsi * xsi
+    #             asi = np.mean(resid)
+    #             sigma2_wsi = np.mean((resid - asi) ** 2)
+    #             b.append(bsi)
+    #             a.append(asi)
+    #             sigma2_w.append(sigma2_wsi)
+    #         a, b, sigma2_w = np.array(a), np.array(b), np.array(sigma2_w)
+    #         sigma2_w += b**2 * sigma2 * n_ms / n_s
 
-            # 4. 检查是否收敛
-            diff = np.r_[
-                mu_x - params["mu_x"],
-                sigma2_x - params["sigma2_x"],
-                beta_x - params["beta_x"],
-                beta_0 - params["beta_0"],
-                sigma2_y - params["sigma2_y"],
-                a - params["a"],
-                b - params["b"],
-                sigma2_w - params["sigma2_w"],
-            ]
-            if Z is not None:
-                diff = np.r_[diff, beta_z - params["beta_z"]]
-            diff = np.max(np.abs(diff))
-            logger.info(
-                f"Outer iteration {iter_i+1}: difference is {diff: .4f}"
-            )
+    #         # 迭代法求解剩余的参数
+    #         beta_x, beta_0, sigma2_y, beta_z = iter_calc_params(
+    #             Y=Y,
+    #             Z=Z,
+    #             Xhat=Xhat,
+    #             Xhat2=Xhat2,
+    #             sigma2=sigma2,
+    #             ind_s=ind_s,
+    #             ind_s_inv=ind_s_inv,
+    #             n_ms=n_ms,
+    #             n_s=n_s,
+    #             beta_x=params["beta_x"],
+    #             beta_0=params["beta_0"],
+    #             beta_z=params.get("beta_z", 0),
+    #             sigma2_y=params["sigma2_y"],
+    #             thre=self.thre_inner_,
+    #             max_iter=self.max_iter_inner_,
+    #         )
 
-            params["mu_x"] = mu_x
-            params["sigma2_x"] = sigma2_x
-            params["beta_x"] = beta_x
-            params["beta_0"] = beta_0
-            params["sigma2_y"] = sigma2_y
-            params["a"] = a
-            params["b"] = b
-            params["sigma2_w"] = sigma2_w
-            if Z is not None:
-                params["beta_z"] = beta_z
+    #         # 4. 检查是否收敛
+    #         diff = np.r_[
+    #             mu_x - params["mu_x"],
+    #             sigma2_x - params["sigma2_x"],
+    #             beta_x - params["beta_x"],
+    #             beta_0 - params["beta_0"],
+    #             sigma2_y - params["sigma2_y"],
+    #             a - params["a"],
+    #             b - params["b"],
+    #             sigma2_w - params["sigma2_w"],
+    #         ]
+    #         if Z is not None:
+    #             diff = np.r_[diff, beta_z - params["beta_z"]]
+    #         diff = np.max(np.abs(diff))
+    #         logger.info(
+    #             f"Outer iteration {iter_i+1}: difference is {diff: .4f}"
+    #         )
 
-            if diff < self.thre_:
-                logger.info(f"Outer iteration stop: difference is {diff: .4f}")
-                break
+    #         params["mu_x"] = mu_x
+    #         params["sigma2_x"] = sigma2_x
+    #         params["beta_x"] = beta_x
+    #         params["beta_0"] = beta_0
+    #         params["sigma2_y"] = sigma2_y
+    #         params["a"] = a
+    #         params["b"] = b
+    #         params["sigma2_w"] = sigma2_w
+    #         if Z is not None:
+    #             params["beta_z"] = beta_z
 
-        self.params_ = params
+    #         if diff < self.thre_:
+    #             logger.info(f"Outer iteration stop: difference is {diff: .4f}")
+    #             break
+
+    #     self.params_ = params
 
     def _fit_binary(
         self,
