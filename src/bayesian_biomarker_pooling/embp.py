@@ -195,7 +195,7 @@ class EM:
             sigma2_w.append(sigma2_ws_i)
 
         return pd.Series(
-            [mu_x, sigma2_x] + a + b + [sigma2_w],
+            [mu_x, sigma2_x] + a + b + sigma2_w,
             index=["mu_x", "sigma2_x"]
             + ["a"] * self._ns
             + ["b"] * self._ns
@@ -216,18 +216,6 @@ class EM:
 
     def v_joint(self, params: pd.Series) -> ndarray:
         raise NotImplementedError
-
-    def calc_diff(self, params_old: pd.Series, params_new: pd.Series) -> float:
-        diff = []
-        for k, v in params_new.items():
-            if v is None:
-                continue
-            diffk = params_old[k] - v
-            if isinstance(diffk, float):
-                diffk = np.array([diffk])
-            diff.append(diffk)
-        diff = np.concatenate(diff)
-        return np.max(np.abs(diff))
 
     def estimate_variance(self):
         v_joint = self.v_joint(self.params_)
@@ -291,9 +279,7 @@ class EM:
         self.prepare()
 
         params = self.init()
-        self.params_hist_ = {
-            k: [v] for k, v in params.items() if v is not None
-        }
+        self.params_hist_ = [params]
         with logging_redirect_tqdm(loggers=[logger]):
             for iter_i in tqdm(
                 range(1, self._max_iter + 1),
@@ -303,13 +289,12 @@ class EM:
 
                 self.e_step(params)
                 params_new = self.m_step(params)
-                diff = self.calc_diff(params, params_new)
+                diff = np.max(np.abs(params - params_new))
                 logger.info(
                     f"EM iteration {iter_i}: difference is {diff: .4f}"
                 )
                 params = params_new  # 更新
-                for k in self.params_hist_.keys():
-                    self.params_hist_[k].append(params[k])
+                self.params_hist_.append(params)
                 if diff < self._thre:
                     self.iter_convergence_ = iter_i
                     break
@@ -320,9 +305,7 @@ class EM:
                 )
 
         self.params_ = params
-        self.params_hist_ = {
-            k: np.stack(arrs, axis=0) for k, arrs in self.params_hist_.items()
-        }
+        self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
 
         if self._var_est:
             self.estimate_variance()
@@ -356,7 +339,7 @@ class ContinueEM(EM):
             [(self._Y[ind] ** 2).mean() for ind in self._ind_S]
         )
 
-    def init(self) -> dict:
+    def init(self) -> pd.Series:
         params = super().init()
 
         Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
@@ -366,39 +349,54 @@ class ContinueEM(EM):
         beta = ols(Xo_des, self._Yo)
         sigma2_ys = np.mean((self._Yo - Xo_des @ beta) ** 2)
 
-        params["beta_0"] = np.full(self._ns, beta[0])
-        params["beta_x"] = beta[1]
-        params["sigma2_y"] = np.full(self._ns, sigma2_ys)
-        params["beta_z"] = None if self._Z is None else beta[2:]
+        return pd.concat(
+            [
+                params,
+                pd.Series(
+                    [beta[1]]
+                    + [beta[0]] * self._ns
+                    + beta[2:].tolist()
+                    + [sigma2_ys] * self._ns,
+                    index=["beta_x"]
+                    + ["beta_0"] * self._ns
+                    + ["beta_z"] * (len(beta) - 2)
+                    + ["sigma2_y"] * self._ns,
+                ),
+            ]
+        )
 
-        return params
+    def e_step(self, params: pd.Series):
+        mu_x = params["mu_x"]
+        sigma2_x = params["sigma2_x"]
+        a = params["a"].values
+        b = params["b"].values
+        sigma2_w = params["sigma2_w"].values
+        beta_x = params["beta_x"]
+        beta_z = params["beta_z"].values if self._Z is not None else 0.0
+        beta_0 = params["beta_0"].values
+        sigma2_y = params["sigma2_y"].values
 
-    def e_step(self, params: dict):
         self._sigma2 = 1 / (
-            params["beta_x"] ** 2 / params["sigma2_y"]
-            + params["b"] ** 2 / params["sigma2_w"]
-            + 1 / params["sigma2_x"]
+            beta_x**2 / sigma2_y + b**2 / sigma2_w + 1 / sigma2_x
         )  # 最后在迭代计算sigma2_y的时候还会用到
-        z_m_part = 0.0 if self._Z is None else self._Zm @ params["beta_z"]
-        beta_0_m_long = params["beta_0"][self._ind_m_inv]
-        sigma2_y_m_long = params["sigma2_y"][self._ind_m_inv]
-        a_m_long = params["a"][self._ind_m_inv]
-        b_m_long = params["b"][self._ind_m_inv]
-        sigma2_w_m_long = params["sigma2_w"][self._ind_m_inv]
+        z_m_part = 0.0 if self._Z is None else self._Zm @ beta_z
+        beta_0_m_long = beta_0[self._ind_m_inv]
+        sigma2_y_m_long = sigma2_y[self._ind_m_inv]
+        a_m_long = a[self._ind_m_inv]
+        b_m_long = b[self._ind_m_inv]
+        sigma2_w_m_long = sigma2_w[self._ind_m_inv]
         sigma2_m_long = self._sigma2[self._ind_m_inv]
 
         xhat_m = (
-            (self._Ym - beta_0_m_long - z_m_part)
-            * params["beta_x"]
-            / sigma2_y_m_long
+            (self._Ym - beta_0_m_long - z_m_part) * beta_x / sigma2_y_m_long
             + (self._Wm - a_m_long) * b_m_long / sigma2_w_m_long
-            + params["mu_x"] / params["sigma2_x"]
+            + mu_x / sigma2_x
         ) * sigma2_m_long
 
         self._Xhat[self._is_m] = xhat_m
         self._Xhat2[self._is_m] = xhat_m**2 + sigma2_m_long
 
-    def m_step(self, params: dict) -> dict:
+    def m_step(self, params: pd.Series) -> pd.Series:
         vbar = self._Xhat2.mean()
         wxbar_s = np.array(
             [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
@@ -419,22 +417,34 @@ class ContinueEM(EM):
         )
         beta_x, beta_0, sigma2_y, beta_z = self.iter_calc_params(
             params["beta_x"],
-            params["beta_0"],
-            params["sigma2_y"],
-            params["beta_z"],
+            params["beta_0"].values,
+            params["sigma2_y"].values,
+            params["beta_z"].values if self._Z is not None else None,
         )
 
-        return {
-            "mu_x": mu_x,
-            "sigma2_x": sigma2_x,
-            "a": a,
-            "b": b,
-            "sigma2_w": sigma2_w,
-            "beta_x": beta_x,
-            "beta_0": beta_0,
-            "sigma2_y": sigma2_y,
-            "beta_z": beta_z,
-        }
+        return pd.Series(
+            np.r_[
+                mu_x,
+                sigma2_x,
+                a,
+                b,
+                sigma2_w,
+                beta_x,
+                beta_0,
+                [] if self._Z is None else beta_z,
+                sigma2_y,
+            ],
+            index=(
+                ["mu_x", "sigma2_x"]
+                + ["a"] * self._ns
+                + ["b"] * self._ns
+                + ["sigma2_w"] * self._ns
+                + ["beta_x"]
+                + ["beta_0"] * self._ns
+                + ([] if self._Z is None else ["beta_z"] * self._Z.shape[1])
+                + ["sigma2_y"] * self._ns
+            ),
+        )
 
     def iter_calc_params(
         self,
@@ -503,28 +513,6 @@ class ContinueEM(EM):
                 break
 
         return beta_x, beta_0, sigma2_y, beta_z
-
-    def concat_params(self, params: dict, log_sigma2: bool = True) -> ndarray:
-        arr = []
-        for key in [
-            "mu_x",
-            "sigma2_x",
-            "a",
-            "b",
-            "sigma2_w",
-            "beta_x",
-            "beta_0",
-            "beta_z",
-            "sigma2_y",
-        ]:
-            value = params["mu_x"]
-            if key.startswith("sigma2") and log_sigma2:
-                value = np.log(value)
-            if isinstance(value, np.ndarray):
-                arr.extend(value.tolist())
-            else:
-                arr.append(value)
-        return np.array(arr)
 
     def v_joint(self, params: dict) -> ndarray:
 
