@@ -1,15 +1,18 @@
 import logging
 from typing import Literal
+from copy import deepcopy
 
 import pandas as pd
 import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
+from scipy.linalg import block_diag
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
 # import pandas as pd
 from numpy import ndarray
+
 from .base import BiomarkerPoolBase
 
 
@@ -106,6 +109,8 @@ class EM:
         thre: float = 1e-5,
         max_iter_inner: int = 100,
         thre_inner: float = 1e-7,
+        pbar: bool = True,
+        variance_estimate: bool = True,
     ) -> None:
         self._X = X
         self._S = S
@@ -117,12 +122,8 @@ class EM:
         self._thre = thre
         self._max_iter_inner = max_iter_inner
         self._thre_inner = thre_inner
-
-    # def prepare(self):
-    #     """
-    #     准备一些在后续步骤中会用到的array
-    #     """
-    #     raise NotImplementedError
+        self._pbar = pbar
+        self._var_est = variance_estimate
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -165,7 +166,7 @@ class EM:
         self._Xhat = np.copy(self._X)
         self._Xhat2 = self._Xhat**2
 
-    def init(self) -> dict:
+    def init(self) -> pd.Series:
         """初始化参数
 
         这里仅初始化mu_x,sigma2_x,a,b,sigma2_w，其他和outcome相关的参数需要在子类
@@ -193,15 +194,15 @@ class EM:
             b.append(abi[1])
             sigma2_w.append(sigma2_ws_i)
 
-        return {
-            "mu_x": mu_x,
-            "sigma2_x": sigma2_x,
-            "a": np.array(a),
-            "b": np.array(b),
-            "sigma2_w": np.array(sigma2_w),
-        }
+        return pd.Series(
+            [mu_x, sigma2_x] + a + b + [sigma2_w],
+            index=["mu_x", "sigma2_x"]
+            + ["a"] * self._ns
+            + ["b"] * self._ns
+            + ["sigma2_w"] * self._ns,
+        )
 
-    def e_step(self, params: dict):
+    def e_step(self, params: pd.Series):
         """Expectation step
 
         从EM算法的定义上，是计算log joint likelihood的后验期望，也就是Q function。
@@ -210,10 +211,13 @@ class EM:
         """
         raise NotImplementedError
 
-    def m_step(self, params: dict) -> dict:
+    def m_step(self, params: pd.Series) -> pd.Series:
         raise NotImplementedError
 
-    def calc_diff(self, params_old: dict, params_new: dict) -> float:
+    def v_joint(self, params: pd.Series) -> ndarray:
+        raise NotImplementedError
+
+    def calc_diff(self, params_old: pd.Series, params_new: pd.Series) -> float:
         diff = []
         for k, v in params_new.items():
             if v is None:
@@ -225,12 +229,76 @@ class EM:
         diff = np.concatenate(diff)
         return np.max(np.abs(diff))
 
-    def run(self, pbar: bool = True):
+    def estimate_variance(self):
+        v_joint = self.v_joint(self.params_)
+        n_params = sum(
+            [
+                1 if isinstance(v, float) else len(v)
+                for v in self.params_.values()
+            ]
+        )
+        params_star = self.concat_params(self.params_)
+
+        with logging_redirect_tqdm(loggers=[logger]):
+            for i in tqdm(
+                range(self.iter_convergence_),
+                desc="Estimate Variance: ",
+                disable=not self._pbar,
+            ):
+                params_i = {k: v[i] for k, v in self.params_hist_.items()}
+                for k, v in self.params_.items():
+                    if v is None:
+                        continue
+                    if isinstance(v, float):
+                        inpt = deepcopy(self.params_)
+                        inpt[k] = self.params_hist_[k][i]
+
+                        self.e_step(inpt)
+                        oupt = self.m_step(inpt)
+
+                        x_diff = (
+                            np.log(inpt[k]) - np.log(self.params_[k])
+                            if k.startswith("sigma2")
+                            else inpt[k] - self.params_[k]
+                        )
+                        rt_col = (
+                            self.concat_params(oupt, log_sigma2=True)
+                            - params_star
+                        ) / x_diff
+                    else:
+                        # TODO:
+                        pass
+                        vs = v
+            #     self.e_step(params)
+            #     params_new = self.m_step(params)
+            #     diff = self.calc_diff(params, params_new)
+            #     logger.info(
+            #         f"EM iteration {iter_i}: difference is {diff: .4f}"
+            #     )
+            #     params = params_new  # 更新
+            #     if diff < self._thre:
+            #         break
+            # else:
+            #     logger.warning(
+            #         f"EM iteration (max_iter={self._max_iter}) "
+            #         "doesn't converge"
+            #     )
+        import ipdb
+
+        ipdb.set_trace()
+
+    def run(self):
         self.prepare()
+
         params = self.init()
+        self.params_hist_ = {
+            k: [v] for k, v in params.items() if v is not None
+        }
         with logging_redirect_tqdm(loggers=[logger]):
             for iter_i in tqdm(
-                range(1, self._max_iter + 1), desc="EM: ", disable=not pbar
+                range(1, self._max_iter + 1),
+                desc="EM: ",
+                disable=not self._pbar,
             ):
 
                 self.e_step(params)
@@ -240,7 +308,10 @@ class EM:
                     f"EM iteration {iter_i}: difference is {diff: .4f}"
                 )
                 params = params_new  # 更新
+                for k in self.params_hist_.keys():
+                    self.params_hist_[k].append(params[k])
                 if diff < self._thre:
+                    self.iter_convergence_ = iter_i
                     break
             else:
                 logger.warning(
@@ -249,9 +320,41 @@ class EM:
                 )
 
         self.params_ = params
+        self.params_hist_ = {
+            k: np.stack(arrs, axis=0) for k, arrs in self.params_hist_.items()
+        }
+
+        if self._var_est:
+            self.estimate_variance()
 
 
 class ContinueEM(EM):
+
+    def prepare(self):
+        super().prepare()
+
+        if not self._var_est:
+            return
+
+        if self._Z is not None:
+            self._zzbar_s = []
+            self._zbar_s = []
+            self._yzbar_s = []
+            for ind in self._ind_S:
+                Zs = self._Z[ind, :]
+                self._zzbar_s.append(Zs.T @ Zs / ind.shape[0])
+                self._zbar_s.append(Zs.mean(axis=0))
+                self._yzbar_s.append((Zs * self._Y[ind]).mean())
+            self._zzbar_s = np.stack(self._zzbar_s, axis=0)
+            self._zbar_s = np.stack(self._zbar_s)
+            self._yzbar_s = np.stack(self._yzbar_s)
+        else:
+            self._zzbar_s = self._zbar_s = self._yzbar_s = 0
+
+        self._ybar_s = np.array([self._Y[ind].mean() for ind in self._ind_S])
+        self._yybar_s = np.array(
+            [(self._Y[ind] ** 2).mean() for ind in self._ind_S]
+        )
 
     def init(self) -> dict:
         params = super().init()
@@ -401,6 +504,174 @@ class ContinueEM(EM):
 
         return beta_x, beta_0, sigma2_y, beta_z
 
+    def concat_params(self, params: dict, log_sigma2: bool = True) -> ndarray:
+        arr = []
+        for key in [
+            "mu_x",
+            "sigma2_x",
+            "a",
+            "b",
+            "sigma2_w",
+            "beta_x",
+            "beta_0",
+            "beta_z",
+            "sigma2_y",
+        ]:
+            value = params["mu_x"]
+            if key.startswith("sigma2") and log_sigma2:
+                value = np.log(value)
+            if isinstance(value, np.ndarray):
+                arr.extend(value.tolist())
+            else:
+                arr.append(value)
+        return np.array(arr)
+
+    def v_joint(self, params: dict) -> ndarray:
+
+        self.e_step(params)
+        xbar = self._Xhat.mean()
+        vbar = self._Xhat2.mean()
+        wxbar_s = np.array(
+            [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
+        )
+        vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
+        xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
+
+        xybar_s = np.array(
+            [np.mean(self._Xhat[ind] * self._Y[ind]) for ind in self._ind_S]
+        )
+        if self._Z is not None:
+            xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
+            xzbar_s = np.stack(
+                [
+                    np.mean(self._Xhat[ind, None] * self._Z[ind, :], axis=0)
+                    for ind in self._ind_S
+                ],
+                axis=0,
+            )
+
+        x12 = (xbar - params["mu_x"]) / params["sigma2_x"]
+        V1 = self._n * np.array(
+            [
+                [1 / params["sigma2_x"], x12],
+                [x12, 0.5 * (vbar - params["mu_x"] ** 2) / params["sigma2_x"]],
+            ]
+        )
+
+        A = np.diag(self._n_s / params["sigma2_w"])
+        B = np.diag(self._n_s * xbar_s / params["sigma2_w"])
+        C = np.diag(
+            self._n_s
+            * (self._wbar_s - params["a"] - params["b"] * xbar_s)
+            / params["sigma2_w"]
+        )
+        D = np.diag(self._n_s * vbar_s / params["sigma2_w"])
+        E = np.diag(
+            self._n_s
+            * (wxbar_s - params["a"] * xbar_s - params["b"] * vbar_s)
+            / params["sigma2_w"]
+        )
+        F = np.diag(
+            self._n_s
+            * (
+                self._wwbar_s
+                + params["a"] ** 2
+                + params["b"] ** 2 * vbar_s
+                - 2 * params["a"] * self._wbar_s
+                - 2 * params["b"] * wxbar_s
+                + 2 * params["a"] * params["b"] * xbar_s
+            )
+            * 0.5
+            / params["sigma2_w"]
+        )
+        V2 = np.concatenate(
+            [
+                np.concatenate([A, B, C], axis=1),
+                np.concatenate([B, D, E], axis=1),
+                np.concatenate([C, E, F], axis=1),
+            ],
+            axis=0,
+        )
+
+        sigma2_y_long = params["sigma2_y"][self._ind_inv]
+        if self._Z is not None:
+            B = (self._n * xzbar)[None, :]
+            E = self._n_s[None, :] * self._zbar_s / params["sigma2_y"]
+            G = (self._Z.T * sigma2_y_long) @ self._Z
+            H = (
+                self._n_s
+                * (
+                    self._yzbar_s.T
+                    - params["beta_0"] * self._zbar_s.T
+                    - params["beta_x"] * xzbar_s.T
+                    - (self._zzbar_s @ params["beta_z"]).T
+                )
+                / params["sigma2_y"]
+            )
+
+            dz2 = np.sum(
+                params["beta_z"] * params["beta_z"][:, None] * self._zzbar_s,
+                axis=(1, 2),
+            )
+            J_zpart = (
+                dz2
+                - 2 * self._yzbar_s @ params["beta_z"]
+                + 2 * params["beta_0"] * self._zbar_s @ params["beta_z"]
+                + 2 * xzbar_s * params["beta_z"] * params["beta_x"]
+            )
+            C_zpart = -xzbar @ params["beta_z"]
+            F_zpart = -self._zbar_s @ params["beta_z"]
+        else:
+            J_zpart = 0.0
+            C_zpart = 0.0
+            F_zpart = 0.0
+        K = np.array([[np.sum(self._Xhat / sigma2_y_long)]])
+        A = (self._n_s * xbar_s / params["sigma2_y"])[None, :]
+        C = (
+            (
+                xybar_s
+                - params["beta_0"] * xbar_s
+                - params["beta_x"] * vbar_s
+                + C_zpart
+            )
+            / params["sigma2_y"]
+        )[None, :]
+        D = np.diag(self._n_s / params["sigma2_y"])
+        F = np.diag(
+            self._n_s
+            * (
+                self._ybar_s
+                - params["beta_0"]
+                - params["beta_x"] * xbar_s
+                + F_zpart
+            )
+            / params["sigma2_y"]
+        )
+        J = np.diag(
+            0.5
+            * self._n_s
+            * (
+                self._yybar_s
+                + params["beta_0"] ** 2
+                + params["beta_x"] ** 2 * vbar_s
+                - 2 * params["beta_0"] * xbar_s
+                - 2 * params["beta_x"] * xybar_s
+                + 2 * params["beta_0"] * params["beta_x"] * xbar_s
+                + J_zpart
+            )
+        )
+        V3 = [[K, A, C], [A.T, D, F], [C.T, F.T, J]]
+        if self._Z is not None:
+            V3[0].insert(2, B)
+            V3[1].insert(2, E)
+            V3[2].insert(2, H.T)
+            V3.insert(2, [B.T, E.T, G, H])
+        V3 = np.block(V3)
+
+        return block_diag(
+            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
+        )
+
 
 class BinaryEM(EM):
 
@@ -415,11 +686,23 @@ class BinaryEM(EM):
         thre: float = 0.00001,
         max_iter_inner: int = 100,
         thre_inner: float = 1e-7,
+        pbar: bool = True,
+        variance_estimate: bool = False,
         lr: float = 1.0,
         nsample_IS: int = 10000,
     ) -> None:
         super().__init__(
-            X, S, W, Y, Z, max_iter, thre, max_iter_inner, thre_inner
+            X,
+            S,
+            W,
+            Y,
+            Z,
+            max_iter,
+            thre,
+            max_iter_inner,
+            thre_inner,
+            pbar,
+            variance_estimate,
         )
         self._lr = lr
         self._nIS = nsample_IS
@@ -619,6 +902,7 @@ class EMBP(BiomarkerPoolBase):
                 self.thre_,
                 self.max_iter_inner_,
                 self.thre_inner_,
+                pbar=self.pbar_,
             )
         elif self.outcome_type_ == "binary":
             estimator = BinaryEM(
@@ -631,10 +915,11 @@ class EMBP(BiomarkerPoolBase):
                 self.thre_,
                 self.max_iter_inner_,
                 self.thre_inner_,
+                pbar=self.pbar_,
                 lr=self.lr_,
-                nsample_IS=self.nsample_IS_
+                nsample_IS=self.nsample_IS_,
             )
         else:
             raise NotImplementedError
-        estimator.run(self.pbar_)
+        estimator.run()
         self.params_ = estimator.params_
