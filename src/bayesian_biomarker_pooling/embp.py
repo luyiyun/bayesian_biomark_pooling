@@ -111,6 +111,7 @@ class EM:
         thre_inner: float = 1e-7,
         pbar: bool = True,
         variance_estimate: bool = True,
+        thre_var_est: float = 1e-3,
     ) -> None:
         self._X = X
         self._S = S
@@ -124,6 +125,7 @@ class EM:
         self._thre_inner = thre_inner
         self._pbar = pbar
         self._var_est = variance_estimate
+        self._thre_var_est = thre_var_est
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -218,41 +220,78 @@ class EM:
         raise NotImplementedError
 
     def estimate_variance(self):
-        v_joint = self.v_joint(self.params_)
         n_params = self.params_.shape[0]
 
-        is_sigma2 = self.params_.index.map(lambda x: x.startswith("sigma2"))
+        ind_sigma2 = np.nonzero(
+            self.params_.index.map(lambda x: x.startswith("sigma2"))
+        )[0]
         params_w_log = self.params_.copy()
-        params_w_log[is_sigma2] = np.log(params_w_log[is_sigma2])
+        params_w_log[ind_sigma2] = np.log(params_w_log[ind_sigma2])
 
+        finish_row_ind = []
         R = []
         with logging_redirect_tqdm(loggers=[logger]):
-            for i in tqdm(
-                range(self.iter_convergence_),
+            for t in tqdm(
+                range(self.params_hist_.shape[0]),
                 desc="Estimate Variance: ",
                 disable=not self._pbar,
             ):
-                params_i = self.params_hist_.iloc[i, :]
+                params_i = self.params_hist_.iloc[t, :]
                 Rt = []
                 for j in range(n_params):
+
+                    # 如果某一行已经收敛，则不行再去进行计算了
+                    if t > 0 and j in finish_row_ind:
+                        Rt.append(R[-1][j, :])
+                        continue
+
                     inpt = self.params_.copy()
-                    inpt.iloc[j] = params_i.iloc[j]
+                    x = inpt.iloc[j] = params_i.iloc[j]
 
                     self.e_step(inpt)
                     oupt = self.m_step(inpt)
 
                     # 修改sigma2为log尺度
-                    inpt[is_sigma2] = np.log(inpt[is_sigma2])
-                    oupt[is_sigma2] = np.log(oupt[is_sigma2])
+                    inpt[ind_sigma2] = np.log(inpt[ind_sigma2])
+                    if j in ind_sigma2:
+                        x = np.log(x)
+
+                    # 计算差值比来作为导数的估计
                     Rt.append(
                         (oupt.values - params_w_log.values)
-                        / (inpt.iloc[j] - params_w_log.iloc[j])
+                        / (x - params_w_log.iloc[j])
                     )
                 Rt = np.stack(Rt, axis=0)
+
+                # 看一下有哪些行完成了收敛
+                if t > 0:
+                    finish_row_ind = np.nonzero(
+                        np.max(np.abs(Rt - R[-1]), axis=1) < self._thre_var_est
+                    )[0]
+
+                    logger.debug("finished_row:" + str(finish_row_ind))
+
                 R.append(Rt)
+                if len(finish_row_ind) == n_params:
+                    break
+            else:
+                logger.warn("estimate variance does not converge.")
 
         R = np.stack(R, axis=0)
+
+        import matplotlib.pyplot as plt
+
+        rdiff = np.max(np.abs(R[1:] - R[:-1]), axis=(1, 2))
+        plt.plot(np.arange(rdiff.shape[0]), rdiff)
+        plt.yscale("log")
+        plt.savefig("./rdiff.png")
+
+        v_joint = self.v_joint(self.params_)
+        self.params_var_ = v_joint + v_joint @ R[-1] @ np.linalg.inv(
+            np.diag(np.ones(n_params)) - R[-1]
+        )
         import ipdb
+
         ipdb.set_trace()
 
     def run(self):
@@ -296,8 +335,10 @@ class ContinueEM(EM):
     def prepare(self):
         super().prepare()
 
-        if not self._var_est:
-            return
+        self._ybar_s = np.array([self._Y[ind].mean() for ind in self._ind_S])
+        self._yybar_s = np.array(
+            [(self._Y[ind] ** 2).mean() for ind in self._ind_S]
+        )
 
         if self._Z is not None:
             self._zzbar_s = []
@@ -313,11 +354,6 @@ class ContinueEM(EM):
             self._yzbar_s = np.stack(self._yzbar_s)
         else:
             self._zzbar_s = self._zbar_s = self._yzbar_s = 0
-
-        self._ybar_s = np.array([self._Y[ind].mean() for ind in self._ind_S])
-        self._yybar_s = np.array(
-            [(self._Y[ind] ** 2).mean() for ind in self._ind_S]
-        )
 
     def init(self) -> pd.Series:
         params = super().init()
