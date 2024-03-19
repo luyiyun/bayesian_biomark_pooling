@@ -3,3 +3,5 @@ results/*
 experiments/results/
 *.ipynb
 **/*.egg-info/
+*.npy
+*.csv

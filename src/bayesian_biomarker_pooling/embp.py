@@ -281,7 +281,7 @@ class EM:
                     oupt = self.m_step(inpt)
 
                     # 修改sigma2为log尺度
-                    inpt.iloc[ind_sigma2] = np.log(inpt.iloc[ind_sigma2])
+                    oupt.iloc[ind_sigma2] = np.log(oupt.iloc[ind_sigma2])
                     if j in ind_sigma2:
                         x = np.log(x)
 
@@ -309,11 +309,6 @@ class EM:
         self._R = np.stack(R, axis=0)
         DM = self._R[-1]
 
-        # import matplotlib.pyplot as plt
-        # rdiff = np.max(np.abs(R[1:] - R[:-1]), axis=(1, 2))
-        # plt.plot(np.arange(rdiff.shape[0]), rdiff)
-        # plt.yscale("log")
-        # plt.savefig("./rdiff.png")
         v_joint = self.v_joint(self.params_)
         self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
             np.diag(np.ones(n_params)) - DM
@@ -655,13 +650,15 @@ class ContinueEM(EM):
             ]
         )
 
-        A = np.diag(self._n_s / sigma2_w)
-        B = np.diag(self._n_s * xbar_s / sigma2_w)
-        C = np.diag(self._n_s * (self._wbar_s - a - b * xbar_s) / sigma2_w)
-        D = np.diag(self._n_s * vbar_s / sigma2_w)
-        E = np.diag(self._n_s * (wxbar_s - a * xbar_s - b * vbar_s) / sigma2_w)
+        temp_mul = self._n_s / sigma2_w
+        A = np.diag(temp_mul)
+        B = np.diag(temp_mul * xbar_s)
+        C = np.diag(temp_mul * (self._wbar_s - a - b * xbar_s))
+        D = np.diag(temp_mul * vbar_s)
+        E = np.diag(temp_mul * (wxbar_s - a * xbar_s - b * vbar_s))
         F = np.diag(
-            self._n_s
+            0.5
+            * temp_mul
             * (
                 self._wwbar_s
                 + a**2
@@ -670,25 +667,20 @@ class ContinueEM(EM):
                 - 2 * b * wxbar_s
                 + 2 * a * b * xbar_s
             )
-            * 0.5
-            / sigma2_w
         )
         V2 = np.block([[A, B, C], [B, D, E], [C, E, F]])
 
         sigma2_y_long = sigma2_y[self._ind_inv]
+        temp_mul = self._n_s / sigma2_y
         if self._Z is not None:
             B = (self._n * xzbar)[None, :]
-            E = self._n_s[None, :] * self._zbar_s / sigma2_y
+            E = temp_mul[None, :] * self._zbar_s
             G = (self._Z.T * sigma2_y_long) @ self._Z
-            H = (
-                self._n_s
-                * (
-                    self._yzbar_s.T
-                    - beta_0 * self._zbar_s.T
-                    - beta_x * xzbar_s.T
-                    - (self._zzbar_s @ beta_z).T
-                )
-                / sigma2_y
+            H = temp_mul * (
+                self._yzbar_s.T
+                - beta_0 * self._zbar_s.T
+                - beta_x * xzbar_s.T
+                - (self._zzbar_s @ beta_z).T
             )
 
             dz2 = np.sum(
@@ -707,20 +699,18 @@ class ContinueEM(EM):
             J_zpart = 0.0
             C_zpart = 0.0
             F_zpart = 0.0
-        K = np.array([[np.sum(self._Xhat / sigma2_y_long)]])
-        A = (self._n_s * xbar_s / sigma2_y)[None, :]
+        K = np.array([[np.sum(temp_mul * vbar_s)]])
+        A = (temp_mul * xbar_s)[None, :]
         C = (
-            (xybar_s - beta_0 * xbar_s - beta_x * vbar_s + C_zpart) / sigma2_y
+            temp_mul * (xybar_s - beta_0 * xbar_s - beta_x * vbar_s + C_zpart)
         )[None, :]
-        D = np.diag(self._n_s / sigma2_y)
+        D = np.diag(temp_mul)
         F = np.diag(
-            self._n_s
-            * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart)
-            / sigma2_y
+            temp_mul * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart)
         )
         J = np.diag(
             0.5
-            * self._n_s
+            * temp_mul
             * (
                 self._yybar_s
                 + beta_0**2
@@ -943,6 +933,7 @@ class EMBP(BiomarkerPoolBase):
         lr: float = 1.0,
         variance_estimate: bool = False,
         variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
+        thre_var_est: float = 1e-4,
         boostrap_samples: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
@@ -959,6 +950,7 @@ class EMBP(BiomarkerPoolBase):
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
         self.var_est_method_ = variance_esitmate_method
+        self.thre_var_est_ = thre_var_est
         self.boostrap_samples_ = boostrap_samples
 
         self._rng = np.random.default_rng(seed)
@@ -983,6 +975,7 @@ class EMBP(BiomarkerPoolBase):
                 self.max_iter_inner_,
                 self.thre_inner_,
                 pbar=self.pbar_,
+                thre_var_est=self.thre_var_est_,
             )
         elif self.outcome_type_ == "binary":
             self._estimator = BinaryEM(
@@ -998,6 +991,7 @@ class EMBP(BiomarkerPoolBase):
                 pbar=self.pbar_,
                 lr=self.lr_,
                 nsample_IS=self.nsample_IS_,
+                thre_var_est=self.thre_var_est_,
             )
         else:
             raise NotImplementedError
@@ -1037,6 +1031,7 @@ class EMBP(BiomarkerPoolBase):
                             self.max_iter_inner_,
                             self.thre_inner_,
                             pbar=False,
+                            thre_var_est=self.thre_var_est_,
                         )
                     elif self.outcome_type_ == "binary":
                         self._estimator = BinaryEM(
@@ -1052,6 +1047,7 @@ class EMBP(BiomarkerPoolBase):
                             pbar=False,
                             lr=self.lr_,
                             nsample_IS=self.nsample_IS_,
+                            thre_var_est=self.thre_var_est_,
                         )
                     else:
                         raise NotImplementedError
@@ -1059,4 +1055,20 @@ class EMBP(BiomarkerPoolBase):
                     params_bootstrap.append(self._estimator.params_.values)
             params_bootstrap = np.stack(params_bootstrap)
             params_var_ = np.var(params_bootstrap, axis=0, ddof=1)
-        self.params_["variance"] = params_var_
+        self.params_["variance(log)"] = params_var_
+        self.params_["std(log)"] = np.sqrt(params_var_)
+        self.params_["CI_1"] = (
+            self.params_["estimate"] - 1.96 * self.params_["std(log)"]
+        )
+        self.params_["CI_2"] = (
+            self.params_["estimate"] + 1.96 * self.params_["std(log)"]
+        )
+        is_sigma2 = self.params_.index.map(lambda x: x.startswith("sigma2"))
+        self.params_.loc[is_sigma2, "CI_1"] = np.exp(
+            np.log(self.params_.loc[is_sigma2, "estimate"])
+            - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+        )
+        self.params_.loc[is_sigma2, "CI_2"] = np.exp(
+            np.log(self.params_.loc[is_sigma2, "estimate"])
+            + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+        )
