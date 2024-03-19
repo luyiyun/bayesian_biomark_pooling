@@ -1,6 +1,5 @@
 import logging
 from typing import Literal
-from copy import deepcopy
 
 import pandas as pd
 import numpy as np
@@ -110,7 +109,6 @@ class EM:
         max_iter_inner: int = 100,
         thre_inner: float = 1e-7,
         pbar: bool = True,
-        variance_estimate: bool = True,
         thre_var_est: float = 1e-3,
     ) -> None:
         self._X = X
@@ -124,7 +122,6 @@ class EM:
         self._max_iter_inner = max_iter_inner
         self._thre_inner = thre_inner
         self._pbar = pbar
-        self._var_est = variance_estimate
         self._thre_var_est = thre_var_est
 
     def prepare(self):
@@ -216,84 +213,6 @@ class EM:
     def m_step(self, params: pd.Series) -> pd.Series:
         raise NotImplementedError
 
-    def v_joint(self, params: pd.Series) -> ndarray:
-        raise NotImplementedError
-
-    def estimate_variance(self):
-        n_params = self.params_.shape[0]
-
-        ind_sigma2 = np.nonzero(
-            self.params_.index.map(lambda x: x.startswith("sigma2"))
-        )[0]
-        params_w_log = self.params_.copy()
-        params_w_log[ind_sigma2] = np.log(params_w_log[ind_sigma2])
-
-        finish_row_ind = []
-        R = []
-        with logging_redirect_tqdm(loggers=[logger]):
-            for t in tqdm(
-                range(self.params_hist_.shape[0]),
-                desc="Estimate Variance: ",
-                disable=not self._pbar,
-            ):
-                params_i = self.params_hist_.iloc[t, :]
-                Rt = []
-                for j in range(n_params):
-
-                    # 如果某一行已经收敛，则不行再去进行计算了
-                    if t > 0 and j in finish_row_ind:
-                        Rt.append(R[-1][j, :])
-                        continue
-
-                    inpt = self.params_.copy()
-                    x = inpt.iloc[j] = params_i.iloc[j]
-
-                    self.e_step(inpt)
-                    oupt = self.m_step(inpt)
-
-                    # 修改sigma2为log尺度
-                    inpt[ind_sigma2] = np.log(inpt[ind_sigma2])
-                    if j in ind_sigma2:
-                        x = np.log(x)
-
-                    # 计算差值比来作为导数的估计
-                    Rt.append(
-                        (oupt.values - params_w_log.values)
-                        / (x - params_w_log.iloc[j])
-                    )
-                Rt = np.stack(Rt, axis=0)
-
-                # 看一下有哪些行完成了收敛
-                if t > 0:
-                    finish_row_ind = np.nonzero(
-                        np.max(np.abs(Rt - R[-1]), axis=1) < self._thre_var_est
-                    )[0]
-
-                    logger.debug("finished_row:" + str(finish_row_ind))
-
-                R.append(Rt)
-                if len(finish_row_ind) == n_params:
-                    break
-            else:
-                logger.warn("estimate variance does not converge.")
-
-        R = np.stack(R, axis=0)
-
-        import matplotlib.pyplot as plt
-
-        rdiff = np.max(np.abs(R[1:] - R[:-1]), axis=(1, 2))
-        plt.plot(np.arange(rdiff.shape[0]), rdiff)
-        plt.yscale("log")
-        plt.savefig("./rdiff.png")
-
-        v_joint = self.v_joint(self.params_)
-        self.params_var_ = v_joint + v_joint @ R[-1] @ np.linalg.inv(
-            np.diag(np.ones(n_params)) - R[-1]
-        )
-        import ipdb
-
-        ipdb.set_trace()
-
     def run(self):
         self.prepare()
 
@@ -326,8 +245,80 @@ class EM:
         self.params_ = params
         self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
 
-        if self._var_est:
-            self.estimate_variance()
+    def v_joint(self, params: pd.Series) -> ndarray:
+        raise NotImplementedError
+
+    def estimate_variance(self) -> ndarray:
+        n_params = self.params_.shape[0]
+
+        ind_sigma2 = np.nonzero(
+            self.params_.index.map(lambda x: x.startswith("sigma2"))
+        )[0]
+        params_w_log = self.params_.copy()
+        params_w_log.iloc[ind_sigma2] = np.log(params_w_log.iloc[ind_sigma2])
+
+        finish_row_ind = []
+        R = []
+        with logging_redirect_tqdm(loggers=[logger]):
+            for t in tqdm(
+                range(self.params_hist_.shape[0]),
+                desc="Estimate Variance: ",
+                disable=not self._pbar,
+            ):
+                params_i = self.params_hist_.iloc[t, :]
+                Rt = []
+                for j in range(n_params):
+
+                    # 如果某一行已经收敛，则不行再去进行计算了
+                    if t > 0 and j in finish_row_ind:
+                        Rt.append(R[-1][j, :])
+                        continue
+
+                    inpt = self.params_.copy()
+                    x = inpt.iloc[j] = params_i.iloc[j]
+
+                    self.e_step(inpt)
+                    oupt = self.m_step(inpt)
+
+                    # 修改sigma2为log尺度
+                    inpt.iloc[ind_sigma2] = np.log(inpt.iloc[ind_sigma2])
+                    if j in ind_sigma2:
+                        x = np.log(x)
+
+                    # 计算差值比来作为导数的估计
+                    Rt.append(
+                        (oupt.values - params_w_log.values)
+                        / (x - params_w_log.iloc[j])
+                    )
+                Rt = np.stack(Rt, axis=0)
+
+                # 看一下有哪些行完成了收敛
+                if t > 0:
+                    finish_row_ind = np.nonzero(
+                        np.max(np.abs(Rt - R[-1]), axis=1) < self._thre_var_est
+                    )[0]
+
+                    logger.debug("finished_row:" + str(finish_row_ind))
+
+                R.append(Rt)
+                if len(finish_row_ind) == n_params:
+                    break
+            else:
+                logger.warn("estimate variance does not converge.")
+
+        self._R = np.stack(R, axis=0)
+        DM = self._R[-1]
+
+        # import matplotlib.pyplot as plt
+        # rdiff = np.max(np.abs(R[1:] - R[:-1]), axis=(1, 2))
+        # plt.plot(np.arange(rdiff.shape[0]), rdiff)
+        # plt.yscale("log")
+        # plt.savefig("./rdiff.png")
+        v_joint = self.v_joint(self.params_)
+        self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
+            np.diag(np.ones(n_params)) - DM
+        )
+        return np.diag(self.params_cov_)
 
 
 class ContinueEM(EM):
@@ -420,6 +411,19 @@ class ContinueEM(EM):
         vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
         xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
 
+        xybar_s = np.array(
+            [np.mean(self._Xhat[ind] * self._Y[ind]) for ind in self._ind_S]
+        )
+        if self._Z is not None:
+            # xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
+            xzbar_s = np.stack(
+                [
+                    np.mean(self._Xhat[ind, None] * self._Z[ind, :], axis=0)
+                    for ind in self._ind_S
+                ],
+                axis=0,
+            )
+
         # 3. M step，更新参数值
         mu_x = np.mean(self._Xhat)
         sigma2_x = vbar - mu_x**2
@@ -431,12 +435,91 @@ class ContinueEM(EM):
             + b**2 * vbar_s
             - 2 * (a * self._wbar_s + b * wxbar_s - a * b * xbar_s)
         )
-        beta_x, beta_0, sigma2_y, beta_z = self.iter_calc_params(
-            params["beta_x"],
-            params["beta_0"].values,
-            params["sigma2_y"].values,
-            params["beta_z"].values if self._Z is not None else None,
-        )
+        # beta_x, beta_0, sigma2_y, beta_z = self.iter_calc_params(
+        #     params["beta_x"],
+        #     params["beta_0"].values,
+        #     params["sigma2_y"].values,
+        #     params["beta_z"].values if self._Z is not None else None,
+        # )
+        beta_x = params["beta_x"]
+        beta_0 = params["beta_0"].values
+        sigma2_y = params["sigma2_y"].values
+        if self._Z is not None:
+            beta_z = params["beta_z"].values
+        for i in range(self._max_iter_inner):
+            # 关于z的一些项
+            if self._Z is not None:
+                xzd = xzbar_s @ beta_z
+                zd = self._zbar_s @ beta_z
+                dzzd = np.sum(
+                    beta_z * self._zzbar_s * beta_z[:, None], axis=(1, 2)
+                )
+                yzd = self._yzbar_s @ beta_z
+                xzd = xzbar_s @ beta_z
+            else:
+                xzd = yzd = dzzd = zd = xzd = 0.0
+            # beta_x
+            beta_x_new = (
+                self._n_s / sigma2_y * (xybar_s - beta_0 * xbar_s - xzd)
+            ).sum() / (self._n_s * vbar_s / sigma2_y).sum()
+            # beta_0
+            beta_0_new = self._ybar_s - zd - beta_x_new * xbar_s
+            # sigma2_y
+            sigma2_y_new = (
+                self._yybar_s
+                + beta_0_new**2
+                + beta_x_new**2 * vbar_s
+                + dzzd
+                - 2 * beta_0_new * self._ybar_s
+                - 2 * beta_x_new * xybar_s
+                - 2 * yzd
+                + 2 * beta_0_new * beta_x_new * xbar_s
+                + 2 * beta_0_new * zd
+                + 2 * beta_x_new * xzd
+            )
+            # beta_z
+            if self._Z is not None:
+                beta_z_new = np.linalg.inv(
+                    np.sum(
+                        self._n_s[:, None, None]
+                        * sigma2_y[:, None, None]
+                        * self._zzbar_s,
+                        axis=0,
+                    )
+                ) @ (
+                    self._n_s
+                    / sigma2_y
+                    * (
+                        self._yzbar_s
+                        - beta_0_new[:, None] * self._zbar_s
+                        - beta_x_new * xzbar_s
+                    )
+                )
+
+            diff = np.max(
+                np.abs(
+                    np.r_[
+                        beta_x_new - beta_x,
+                        beta_0_new - beta_0,
+                        sigma2_y_new - sigma2_y,
+                        [] if self._Z is None else beta_z_new - beta_z,
+                    ]
+                )
+            )
+
+            logger.debug(f"Inner iteration {i+1}: difference is {diff: .4f}")
+            beta_x = beta_x_new
+            beta_0 = beta_0_new
+            sigma2_y = sigma2_y_new
+            if self._Z is not None:
+                beta_z = beta_z_new
+
+            if diff < self._thre_inner:
+                logger.debug(f"Inner iteration stop, stop iter: {i+1}")
+                break
+
+        else:
+            logger.warn("Inner iteration does not converge")
 
         return pd.Series(
             np.r_[
@@ -590,14 +673,7 @@ class ContinueEM(EM):
             * 0.5
             / sigma2_w
         )
-        V2 = np.concatenate(
-            [
-                np.concatenate([A, B, C], axis=1),
-                np.concatenate([B, D, E], axis=1),
-                np.concatenate([C, E, F], axis=1),
-            ],
-            axis=0,
-        )
+        V2 = np.block([[A, B, C], [B, D, E], [C, E, F]])
 
         sigma2_y_long = sigma2_y[self._ind_inv]
         if self._Z is not None:
@@ -866,7 +942,10 @@ class EMBP(BiomarkerPoolBase):
         nsample_IS: int = 10000,
         lr: float = 1.0,
         variance_estimate: bool = False,
+        variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
+        boostrap_samples: int = 200,
         pbar: bool = True,
+        seed: int | None = 0,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
 
@@ -879,6 +958,10 @@ class EMBP(BiomarkerPoolBase):
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
+        self.var_est_method_ = variance_esitmate_method
+        self.boostrap_samples_ = boostrap_samples
+
+        self._rng = np.random.default_rng(seed)
 
     def fit(
         self,
@@ -889,7 +972,7 @@ class EMBP(BiomarkerPoolBase):
         Z: ndarray | None = None,
     ) -> None:
         if self.outcome_type_ == "continue":
-            estimator = ContinueEM(
+            self._estimator = ContinueEM(
                 X,
                 S,
                 W,
@@ -899,11 +982,10 @@ class EMBP(BiomarkerPoolBase):
                 self.thre_,
                 self.max_iter_inner_,
                 self.thre_inner_,
-                variance_estimate=self.var_est_,
                 pbar=self.pbar_,
             )
         elif self.outcome_type_ == "binary":
-            estimator = BinaryEM(
+            self._estimator = BinaryEM(
                 X,
                 S,
                 W,
@@ -913,12 +995,68 @@ class EMBP(BiomarkerPoolBase):
                 self.thre_,
                 self.max_iter_inner_,
                 self.thre_inner_,
-                variance_estimate=self.var_est_,
                 pbar=self.pbar_,
                 lr=self.lr_,
                 nsample_IS=self.nsample_IS_,
             )
         else:
             raise NotImplementedError
-        estimator.run()
-        self.params_ = estimator.params_
+        self._estimator.run()
+        self.params_ = self._estimator.params_.to_frame("estimate")
+
+        if not self.var_est_:
+            return
+
+        if self.var_est_method_ == "sem":
+            params_var_ = self._estimator.estimate_variance()
+        elif self.var_est_method_ == "boostrap":
+            params_bootstrap = []
+            with logging_redirect_tqdm(loggers=[logger]):
+                for _ in tqdm(
+                    range(self.boostrap_samples_), disable=not self.pbar_
+                ):
+                    ind = self._rng.choice(
+                        Y.shape[0], size=Y.shape[0], replace=True
+                    )
+                    X_, S_, W_, Y_, Z_ = (
+                        X[ind],
+                        S[ind],
+                        W[ind],
+                        Y[ind],
+                        None if Z is None else Z[ind],
+                    )
+                    if self.outcome_type_ == "continue":
+                        self._estimator = ContinueEM(
+                            X_,
+                            S_,
+                            W_,
+                            Y_,
+                            Z_,
+                            self.max_iter_,
+                            self.thre_,
+                            self.max_iter_inner_,
+                            self.thre_inner_,
+                            pbar=False,
+                        )
+                    elif self.outcome_type_ == "binary":
+                        self._estimator = BinaryEM(
+                            X_,
+                            S_,
+                            W_,
+                            Y_,
+                            Z_,
+                            self.max_iter_,
+                            self.thre_,
+                            self.max_iter_inner_,
+                            self.thre_inner_,
+                            pbar=False,
+                            lr=self.lr_,
+                            nsample_IS=self.nsample_IS_,
+                        )
+                    else:
+                        raise NotImplementedError
+                    self._estimator.run()
+                    params_bootstrap.append(self._estimator.params_.values)
+            params_bootstrap = np.stack(params_bootstrap)
+            params_var_ = np.var(params_bootstrap, axis=0, ddof=1)
+        self.params_["variance"] = params_var_
