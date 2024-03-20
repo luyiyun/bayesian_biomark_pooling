@@ -67,7 +67,7 @@ def temp_test():
     # plt.show()
 
 
-def trial():
+def trial_continue():
     # 模拟实验：
     # 1. 不同样本量，不同缺失比例下的效果,
     # 2. 一类错误 & 效能
@@ -123,9 +123,66 @@ def trial():
     # print(simulator.parameters["beta_x"], model.params_["beta_x"])
 
 
+def trial_binary():
+    # 模拟实验：
+    # 1. 不同样本量，不同缺失比例下的效果,
+    # 2. 一类错误 & 效能
+    # 3. 把参数默认值搞清楚
+
+    simulator = Simulator(
+        type_outcome="binary",
+        beta_x=0.0,
+        sigma2_y=[0.5, 1.0, 1.25, 1.5],
+        beta_0=[0.5, 0.75, 1.25, 1.5],
+    )
+    res_em, res_em_ci1, res_em_ci2, res_ols = [], [], [], []
+    for i in tqdm(range(100)):
+        df = simulator.simulate()
+        model = EMBP(
+            outcome_type="continue",
+            max_iter=1000,
+            variance_estimate=True,
+            variance_esitmate_method="sem",
+            thre=1e-10,
+            thre_inner=1e-10,
+            pbar=False,
+        )
+        model.fit(
+            df["X"].values, df["S"].values, df["W"].values, df["Y"].values
+        )
+        resi = model.params_.loc["beta_x", "estimate"]
+        res_em.append(resi)
+        res_em_ci1.append(model.params_.loc["beta_x", "CI_1"])
+        res_em_ci2.append(model.params_.loc["beta_x", "CI_2"])
+        res_ols.append(model._estimator.params_hist_ori_["beta_x"].iloc[0])
+    true_beta_x = simulator.parameters["beta_x"]
+    print(f"True: {true_beta_x: .6f}")
+    res_em, res_ols = np.array(res_em), np.array(res_ols)
+    res_ci1, res_ci2 = np.array(res_em_ci1), np.array(res_em_ci2)
+    cov_rate = np.mean((res_ci1 <= true_beta_x) & (res_ci2 >= true_beta_x))
+    print(
+        f"OLS: {res_ols.mean(): .6f}, "
+        f"Bias is {np.abs(res_ols.mean() - true_beta_x):.6f},"
+        f" MSE is {np.mean((res_ols - true_beta_x) ** 2):.6f}"
+    )
+    print(
+        f"EMBP: {res_em.mean(): .6f}"
+        f", Bias is {np.abs(res_em.mean() - true_beta_x):.6f}"
+        f", MSE is {np.mean((res_em - true_beta_x) ** 2):.6f}, "
+        f", Cov Rate is {cov_rate: .6f}"
+    )
+    # simulator = Simulator(type_outcome="binary", n_knowX_per_studies=10)
+    # df = simulator.simulate()
+    # print(df)
+    # model = EMBP(outcome_type="binary")
+    # model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
+    # print(simulator.parameters["beta_x"], model.params_["beta_x"])
+
+
 def main():
     # trial()
-    temp_test()
+    # temp_test()
+    trial_binary()
 
 
 if __name__ == "__main__":

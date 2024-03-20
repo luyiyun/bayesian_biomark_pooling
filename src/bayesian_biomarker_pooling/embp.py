@@ -1004,21 +1004,23 @@ class EMBP(BiomarkerPoolBase):
     def __init__(
         self,
         outcome_type: Literal["continue", "binary"],
-        thre: float = 1e-5,
-        max_iter: int = 100,
-        thre_inner: float = 1e-7,
+        max_iter: int = 500,
         max_iter_inner: int = 100,
+        thre: None | float = None,
+        thre_inner: None | float = None,
         nsample_IS: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
         variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
-        thre_var_est: float = 1e-4,
+        thre_var_est: None | float = None,
         boostrap_samples: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
         ema: float = 0.1,
         use_gpu: bool = False,
     ) -> None:
+        if variance_esitmate_method == "boostrap":
+            raise NotImplementedError
         assert outcome_type in ["continue", "binary"]
         if use_gpu:
             try:
@@ -1032,16 +1034,24 @@ class EMBP(BiomarkerPoolBase):
             raise NotImplementedError
 
         self.outcome_type_ = outcome_type
-        self.thre_ = thre
         self.max_iter_ = max_iter
-        self.thre_inner_ = thre_inner
         self.max_iter_inner_ = max_iter_inner
+        self.thre_ = (
+            thre
+            if thre is None
+            else {"continue": 1e-10, "binary": 1e-3}[outcome_type]
+        )
+        self.thre_inner_ = thre_inner if thre_inner is not None else 1e-10
         self.nsample_IS_ = nsample_IS
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
         self.var_est_method_ = variance_esitmate_method
-        self.thre_var_est_ = thre_var_est
+        self.thre_var_est_ = (
+            thre_var_est
+            if thre_var_est
+            else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
+        )
         self.boostrap_samples_ = boostrap_samples
         self.ema_ = ema
         self.use_gpu_ = use_gpu
