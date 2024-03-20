@@ -2,7 +2,7 @@ import logging
 import os
 
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -11,11 +11,15 @@ from bayesian_biomarker_pooling.embp import EMBP
 
 
 def temp_test():
+    log_level = logging.WARNING
     logger = logging.getLogger("EMBP")
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(log_level)
     for handler in logger.handlers:
         if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(logging.DEBUG)
+            handler.setLevel(log_level)
+
+    root = "./results/tmp_embp"
+    os.makedirs(root, exist_ok=True)
 
     simulator = Simulator(type_outcome="binary")
     df = simulator.simulate()
@@ -24,35 +28,43 @@ def temp_test():
         max_iter=500,
         variance_estimate=False,
         variance_esitmate_method="sem",
-        thre=1e-4,
+        thre=1e-3,
         thre_inner=1e-10,
         thre_var_est=1e-4,
         pbar=True,
-        nsample_IS=5000,
-        ema=0.1
+        nsample_IS=10000,
+        ema=0.1,
+        use_gpu=True,
     )
-    model.fit(
-        df["X"].values, df["S"].values, df["W"].values, df["Y"].values
-    )
+    model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
+    params = model.params_
     params_hist = model._estimator.params_hist_
     # R = model._estimator._R
 
-    model.params_.to_csv("./temp_params.csv")
-    params_hist.to_csv("./temp_hist.csv")
+    model.params_.to_csv(os.path.join(root, "temp_params.csv"))
+    params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
     # np.save("./temp_R.npy", R)
 
-    params = pd.read_csv("./temp_params.csv", index_col=0)
-    params_hist = pd.read_csv("./temp_hist.csv", index_col=0)
+    # params = pd.read_csv("./temp_params.csv", index_col=0)
+    # params_hist = pd.read_csv("./temp_hist.csv", index_col=0)
     # R = np.load("./temp_R.npy")
     print(params)
 
-    fig, axs = plt.subplots(ncols=2, figsize=(8, 4), sharey=False)
-    params_hist["beta_x"].plot(ax=axs[0])
+    nr = int(np.sqrt(params.shape[0]))
+    nc = (params.shape[0] + 1) // nr
+    fig, axs = plt.subplots(
+        nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
+    )
+    axs = axs.flatten()
+    for i in range(params_hist.shape[1]):
+        params_hist.iloc[:, i].plot(ax=axs[i])
+        axs[i].set_title(params.index[i])
     # df = pd.DataFrame(R[:, 14, :], columns=params_hist.columns)
     # df.plot(ax=axs[1])
     fig.tight_layout()
-    plt.show()
+    fig.savefig(os.path.join(root, "params_hist.png"))
+    # plt.show()
 
 
 def trial():
@@ -63,7 +75,7 @@ def trial():
 
     simulator = Simulator(
         type_outcome="continue",
-        beta_x=0.,
+        beta_x=0.0,
         sigma2_y=[0.5, 1.0, 1.25, 1.5],
         beta_0=[0.5, 0.75, 1.25, 1.5],
     )

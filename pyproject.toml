@@ -22,7 +22,11 @@ dependencies = ["pymc>=5.10", "numpy>=1.26.2", "scipy>=1.11.4", "pandas>=2.1.1"]
 Homepage = "https://github.com/luyiyun/bayesian_biomark_pooling"
 Issues = "https://github.com/luyiyun/bayesian_biomark_pooling/issues"
 [project.optional-dependencies]
+torch = [
+    "torch>=2.2.0",
+]
 develop = [
+    "torch>=2.2.0",
     "ipdb>=0.13.13",
     "tqdm>=4.65.0",
     "openpyxl>=3.0.10",

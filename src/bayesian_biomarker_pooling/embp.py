@@ -13,17 +13,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from numpy import ndarray
 
 from .base import BiomarkerPoolBase
-
-
-logger = logging.getLogger("EMBP")
-logger.setLevel(logging.WARNING)
-ch = logging.StreamHandler()
-ch.setLevel(logging.WARNING)
-formatter = logging.Formatter(
-    "[%(name)s][%(levelname)s][%(asctime)s]:%(message)s"
-)
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+from .logger import logger_embp
 
 
 def ols(x_des, y) -> np.ndarray:
@@ -43,11 +33,11 @@ def logistic(
         beta -= delta
 
         diff = np.max(np.abs(delta))
-        logger.info(f"Init Newton-Raphson: iter={i+1} diff={diff:.4f}")
+        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={diff:.4f}")
         if diff < thre:
             break
     else:
-        logger.warning(
+        logger_embp.warning(
             f"Init Newton-Raphson (max_iter={max_iter}) doesn't converge"
         )
 
@@ -87,11 +77,11 @@ def newton_raphson_beta(
         beta_ -= beta_delta
 
         diff = np.max(np.abs(beta_delta))
-        logger.debug(f"M step Newton-Raphson: iter={i+1} diff={diff:.4f}")
+        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={diff:.4f}")
         if diff < thre:
             break
     else:
-        logger.warning(
+        logger_embp.warning(
             f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
         )
 
@@ -221,7 +211,7 @@ class EM:
 
         params = self.init()
         self.params_hist_ = [params]
-        with logging_redirect_tqdm(loggers=[logger]):
+        with logging_redirect_tqdm(loggers=[logger_embp]):
             for iter_i in tqdm(
                 range(1, self._max_iter + 1),
                 desc="EM: ",
@@ -231,7 +221,7 @@ class EM:
                 self.e_step(params)
                 params_new = self.m_step(params)
                 diff = np.max(np.abs(params - params_new))
-                logger.info(
+                logger_embp.info(
                     f"EM iteration {iter_i}: difference is {diff: .4f}"
                 )
                 params = params_new  # 更新
@@ -240,7 +230,7 @@ class EM:
                     self.iter_convergence_ = iter_i
                     break
             else:
-                logger.warning(
+                logger_embp.warning(
                     f"EM iteration (max_iter={self._max_iter}) "
                     "doesn't converge"
                 )
@@ -262,7 +252,7 @@ class EM:
 
         finish_row_ind = []
         R = []
-        with logging_redirect_tqdm(loggers=[logger]):
+        with logging_redirect_tqdm(loggers=[logger_embp]):
             for t in tqdm(
                 range(self.params_hist_.shape[0]),
                 desc="Estimate Variance: ",
@@ -301,13 +291,13 @@ class EM:
                         np.max(np.abs(Rt - R[-1]), axis=1) < self._thre_var_est
                     )[0]
 
-                    logger.debug("finished_row:" + str(finish_row_ind))
+                    logger_embp.info("finished_row:" + str(finish_row_ind))
 
                 R.append(Rt)
                 if len(finish_row_ind) == n_params:
                     break
             else:
-                logger.warn("estimate variance does not converge.")
+                logger_embp.warn("estimate variance does not converge.")
 
         self._R = np.stack(R, axis=0)
         DM = self._R[-1]
@@ -505,7 +495,9 @@ class ContinueEM(EM):
                 )
             )
 
-            logger.debug(f"Inner iteration {i+1}: difference is {diff: .4f}")
+            logger_embp.info(
+                f"Inner iteration {i+1}: difference is {diff: .4f}"
+            )
             beta_x = beta_x_new
             beta_0 = beta_0_new
             sigma2_y = sigma2_y_new
@@ -513,11 +505,11 @@ class ContinueEM(EM):
                 beta_z = beta_z_new
 
             if diff < self._thre_inner:
-                logger.debug(f"Inner iteration stop, stop iter: {i+1}")
+                logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
                 break
 
         else:
-            logger.warn("Inner iteration does not converge")
+            logger_embp.warn("Inner iteration does not converge")
 
         return pd.Series(
             np.r_[
@@ -597,7 +589,9 @@ class ContinueEM(EM):
                 diff = np.r_[diff, beta_z_new - beta_z]
             diff = np.max(np.abs(diff))
 
-            logger.info(f"Inner iteration {iter_i}: difference is {diff: .4f}")
+            logger_embp.info(
+                f"Inner iteration {iter_i}: difference is {diff: .4f}"
+            )
 
             beta_x = beta_x_new
             beta_0 = beta_0_new
@@ -606,7 +600,7 @@ class ContinueEM(EM):
                 beta_z = beta_z_new
 
             if diff < self._thre_inner:
-                logger.info(f"Inner iteration stop, stop iter: {iter_i}")
+                logger_embp.info(f"Inner iteration stop, stop iter: {iter_i}")
                 break
 
         return beta_x, beta_0, sigma2_y, beta_z
@@ -855,11 +849,13 @@ class BinaryEM(EM):
             Xm -= xdelta
 
             diff = np.max(np.abs(xdelta))
-            logger.info(f"E step Newton-Raphson: iter={i} diff={diff:.4f}")
+            logger_embp.info(
+                f"E step Newton-Raphson: iter={i} diff={diff:.4f}"
+            )
             if diff < self._thre_inner:
                 break
         else:
-            logger.warning(
+            logger_embp.warning(
                 f"E step Newton-Raphson (max_iter={self._max_iter_inner})"
                 " doesn't converge"
             )
@@ -887,9 +883,9 @@ class BinaryEM(EM):
         pIS = pIS - norm_lap.logpdf(self._XIS)
         self._WIS = softmax(pIS, axis=0)
 
-        if logger.level <= logging.INFO:
+        if logger_embp.level <= logging.INFO:
             Seff = 1 / np.sum(self._WIS**2, axis=0)
-            logger.info(
+            logger_embp.info(
                 "Importance effective size "
                 + f"is {Seff.mean():.2f}±{Seff.std():.2f}"
             )
@@ -971,7 +967,7 @@ class BinaryEM(EM):
         params_ema = params = self.init()
         self.params_hist_ori_ = [params]
         self.params_hist_ = [params]
-        with logging_redirect_tqdm(loggers=[logger]):
+        with logging_redirect_tqdm(loggers=[logger_embp]):
             for iter_i in tqdm(
                 range(1, self._max_iter + 1),
                 desc="EM: ",
@@ -986,14 +982,14 @@ class BinaryEM(EM):
                 self.params_hist_.append(params_ema)
 
                 diff = np.max(np.abs(params_ema - self.params_hist_[-2]))
-                logger.info(
+                logger_embp.info(
                     f"EM iteration {iter_i}: difference is {diff: .4f}"
                 )
                 if diff < self._thre:
                     self.iter_convergence_ = iter_i
                     break
             else:
-                logger.warning(
+                logger_embp.warning(
                     f"EM iteration (max_iter={self._max_iter}) "
                     "doesn't converge"
                 )
@@ -1021,8 +1017,19 @@ class EMBP(BiomarkerPoolBase):
         pbar: bool = True,
         seed: int | None = 0,
         ema: float = 0.1,
+        use_gpu: bool = False,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
+        if use_gpu:
+            try:
+                import torch
+            except ImportError:
+                raise ImportError(
+                    "torch is not installed, "
+                    "please install torch or BBP[torch]"
+                )
+        if use_gpu and outcome_type == "continue":
+            raise NotImplementedError
 
         self.outcome_type_ = outcome_type
         self.thre_ = thre
@@ -1037,8 +1044,12 @@ class EMBP(BiomarkerPoolBase):
         self.thre_var_est_ = thre_var_est
         self.boostrap_samples_ = boostrap_samples
         self.ema_ = ema
+        self.use_gpu_ = use_gpu
 
-        self._rng = np.random.default_rng(seed)
+        if use_gpu:
+            torch.random.manual_seed(seed)
+        else:
+            self._rng = np.random.default_rng(seed)
 
     def fit(
         self,
@@ -1063,22 +1074,43 @@ class EMBP(BiomarkerPoolBase):
                 thre_var_est=self.thre_var_est_,
             )
         elif self.outcome_type_ == "binary":
-            self._estimator = BinaryEM(
-                X,
-                S,
-                W,
-                Y,
-                Z,
-                self.max_iter_,
-                self.thre_,
-                self.max_iter_inner_,
-                self.thre_inner_,
-                pbar=self.pbar_,
-                lr=self.lr_,
-                nsample_IS=self.nsample_IS_,
-                thre_var_est=self.thre_var_est_,
-                ema=self.ema_,
-            )
+            if self.use_gpu_:
+                from .embp_gpu import BinaryEMTorch
+
+                self._estimator = BinaryEMTorch(
+                    X,
+                    S,
+                    W,
+                    Y,
+                    Z,
+                    self.max_iter_,
+                    self.thre_,
+                    self.max_iter_inner_,
+                    self.thre_inner_,
+                    pbar=self.pbar_,
+                    lr=self.lr_,
+                    nsample_IS=self.nsample_IS_,
+                    thre_var_est=self.thre_var_est_,
+                    ema=self.ema_,
+                    device="cuda:0",
+                )
+            else:
+                self._estimator = BinaryEM(
+                    X,
+                    S,
+                    W,
+                    Y,
+                    Z,
+                    self.max_iter_,
+                    self.thre_,
+                    self.max_iter_inner_,
+                    self.thre_inner_,
+                    pbar=self.pbar_,
+                    lr=self.lr_,
+                    nsample_IS=self.nsample_IS_,
+                    thre_var_est=self.thre_var_est_,
+                    ema=self.ema_,
+                )
         else:
             raise NotImplementedError
         self._estimator.run()
@@ -1090,58 +1122,59 @@ class EMBP(BiomarkerPoolBase):
         if self.var_est_method_ == "sem":
             params_var_ = self._estimator.estimate_variance()
         elif self.var_est_method_ == "boostrap":
-            params_bootstrap = []
-            with logging_redirect_tqdm(loggers=[logger]):
-                for _ in tqdm(
-                    range(self.boostrap_samples_), disable=not self.pbar_
-                ):
-                    ind = self._rng.choice(
-                        Y.shape[0], size=Y.shape[0], replace=True
-                    )
-                    X_, S_, W_, Y_, Z_ = (
-                        X[ind],
-                        S[ind],
-                        W[ind],
-                        Y[ind],
-                        None if Z is None else Z[ind],
-                    )
-                    if self.outcome_type_ == "continue":
-                        self._estimator = ContinueEM(
-                            X_,
-                            S_,
-                            W_,
-                            Y_,
-                            Z_,
-                            self.max_iter_,
-                            self.thre_,
-                            self.max_iter_inner_,
-                            self.thre_inner_,
-                            pbar=False,
-                            thre_var_est=self.thre_var_est_,
-                        )
-                    elif self.outcome_type_ == "binary":
-                        self._estimator = BinaryEM(
-                            X_,
-                            S_,
-                            W_,
-                            Y_,
-                            Z_,
-                            self.max_iter_,
-                            self.thre_,
-                            self.max_iter_inner_,
-                            self.thre_inner_,
-                            pbar=False,
-                            lr=self.lr_,
-                            nsample_IS=self.nsample_IS_,
-                            thre_var_est=self.thre_var_est_,
-                            ema=self.ema_,
-                        )
-                    else:
-                        raise NotImplementedError
-                    self._estimator.run()
-                    params_bootstrap.append(self._estimator.params_.values)
-            params_bootstrap = np.stack(params_bootstrap)
-            params_var_ = np.var(params_bootstrap, axis=0, ddof=1)
+            raise NotImplementedError
+            # params_bootstrap = []
+            # with logging_redirect_tqdm(loggers=[logger]):
+            #     for _ in tqdm(
+            #         range(self.boostrap_samples_), disable=not self.pbar_
+            #     ):
+            #         ind = self._rng.choice(
+            #             Y.shape[0], size=Y.shape[0], replace=True
+            #         )
+            #         X_, S_, W_, Y_, Z_ = (
+            #             X[ind],
+            #             S[ind],
+            #             W[ind],
+            #             Y[ind],
+            #             None if Z is None else Z[ind],
+            #         )
+            #         if self.outcome_type_ == "continue":
+            #             self._estimator = ContinueEM(
+            #                 X_,
+            #                 S_,
+            #                 W_,
+            #                 Y_,
+            #                 Z_,
+            #                 self.max_iter_,
+            #                 self.thre_,
+            #                 self.max_iter_inner_,
+            #                 self.thre_inner_,
+            #                 pbar=False,
+            #                 thre_var_est=self.thre_var_est_,
+            #             )
+            #         elif self.outcome_type_ == "binary":
+            #             self._estimator = BinaryEM(
+            #                 X_,
+            #                 S_,
+            #                 W_,
+            #                 Y_,
+            #                 Z_,
+            #                 self.max_iter_,
+            #                 self.thre_,
+            #                 self.max_iter_inner_,
+            #                 self.thre_inner_,
+            #                 pbar=False,
+            #                 lr=self.lr_,
+            #                 nsample_IS=self.nsample_IS_,
+            #                 thre_var_est=self.thre_var_est_,
+            #                 ema=self.ema_,
+            #             )
+            #         else:
+            #             raise NotImplementedError
+            #         self._estimator.run()
+            #         params_bootstrap.append(self._estimator.params_.values)
+            # params_bootstrap = np.stack(params_bootstrap)
+            # params_var_ = np.var(params_bootstrap, axis=0, ddof=1)
         self.params_["variance(log)"] = params_var_
         self.params_["std(log)"] = np.sqrt(params_var_)
         self.params_["CI_1"] = (
