@@ -1038,7 +1038,7 @@ class EMBP(BiomarkerPoolBase):
         self.max_iter_inner_ = max_iter_inner
         self.thre_ = (
             thre
-            if thre is None
+            if thre is not None
             else {"continue": 1e-10, "binary": 1e-3}[outcome_type]
         )
         self.thre_inner_ = thre_inner if thre_inner is not None else 1e-10
@@ -1049,7 +1049,7 @@ class EMBP(BiomarkerPoolBase):
         self.var_est_method_ = variance_esitmate_method
         self.thre_var_est_ = (
             thre_var_est
-            if thre_var_est
+            if thre_var_est is not None
             else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
         )
         self.boostrap_samples_ = boostrap_samples
