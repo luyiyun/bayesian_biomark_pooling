@@ -98,9 +98,11 @@ class EM:
         Y: ndarray,
         Z: ndarray | None = None,
         max_iter: int = 100,
-        thre: float = 1e-5,
         max_iter_inner: int = 100,
-        thre_inner: float = 1e-7,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta2: float = 1e-5,
+        delta2_inner: float = 1e-7,
         pbar: bool = True,
         thre_var_est: float = 1e-3,
     ) -> None:
@@ -111,9 +113,11 @@ class EM:
         self._Z = Z
 
         self._max_iter = max_iter
-        self._thre = thre
         self._max_iter_inner = max_iter_inner
-        self._thre_inner = thre_inner
+        self._delta1 = delta1
+        self._delta1_inner = delta1_inner
+        self._delta2 = delta2
+        self._delta2_inner = delta2_inner
         self._pbar = pbar
         self._thre_var_est = thre_var_est
 
@@ -220,13 +224,18 @@ class EM:
 
                 self.e_step(params)
                 params_new = self.m_step(params)
-                diff = np.max(np.abs(params - params_new))
+                # diff = np.max(np.abs(params - params_new))
+                rdiff = np.max(
+                    np.abs(params - params_new)
+                    / (np.abs(params) + self._delta1)
+                )
                 logger_embp.info(
-                    f"EM iteration {iter_i}: difference is {diff: .4f}"
+                    f"EM iteration {iter_i}: "
+                    f"relative difference is {rdiff: .4f}"
                 )
                 params = params_new  # 更新
                 self.params_hist_.append(params)
-                if diff < self._thre:
+                if rdiff < self._delta2:
                     self.iter_convergence_ = iter_i
                     break
             else:
@@ -423,13 +432,10 @@ class ContinueEM(EM):
             + b**2 * vbar_s
             - 2 * (a * self._wbar_s + b * wxbar_s - a * b * xbar_s)
         )
-        # beta_x, beta_0, sigma2_y, beta_z = self.iter_calc_params(
-        #     params["beta_x"],
-        #     params["beta_0"].values,
-        #     params["sigma2_y"].values,
-        #     params["beta_z"].values if self._Z is not None else None,
-        # )
-        beta_x = params["beta_x"]
+
+        # 迭代更新beta值
+        beta_all = params.loc["beta_x":].values
+        # beta_x = params["beta_x"]  # beta_x作为第一个计算值，是用不到的
         beta_0 = params["beta_0"].values
         sigma2_y = params["sigma2_y"].values
         if self._Z is not None:
@@ -484,27 +490,31 @@ class ContinueEM(EM):
                     )
                 )
 
-            diff = np.max(
-                np.abs(
-                    np.r_[
-                        beta_x_new - beta_x,
-                        beta_0_new - beta_0,
-                        sigma2_y_new - sigma2_y,
-                        [] if self._Z is None else beta_z_new - beta_z,
-                    ]
-                )
+            # calculate the relative difference
+            beta_all_new = np.r_[
+                beta_x_new,
+                beta_0_new,
+                [] if self._Z is None else beta_z_new,
+                sigma2_y_new,
+            ]
+            rdiff = np.max(
+                np.abs(beta_all_new - beta_all)
+                / (np.abs(beta_all) + self._delta1_inner)
+            )
+            logger_embp.info(
+                f"Inner iteration {i+1}: "
+                f"relative difference is {rdiff: .4f}"
             )
 
-            logger_embp.info(
-                f"Inner iteration {i+1}: difference is {diff: .4f}"
-            )
-            beta_x = beta_x_new
+            # update parameters
+            beta_all = beta_all_new
+            # beta_x = beta_x_new
             beta_0 = beta_0_new
             sigma2_y = sigma2_y_new
             if self._Z is not None:
                 beta_z = beta_z_new
 
-            if diff < self._thre_inner:
+            if rdiff < self._delta2_inner:
                 logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
                 break
 
@@ -518,21 +528,9 @@ class ContinueEM(EM):
                 a,
                 b,
                 sigma2_w,
-                beta_x,
-                beta_0,
-                [] if self._Z is None else beta_z,
-                sigma2_y,
+                beta_all,
             ],
-            index=(
-                ["mu_x", "sigma2_x"]
-                + ["a"] * self._ns
-                + ["b"] * self._ns
-                + ["sigma2_w"] * self._ns
-                + ["beta_x"]
-                + ["beta_0"] * self._ns
-                + ([] if self._Z is None else ["beta_z"] * self._Z.shape[1])
-                + ["sigma2_y"] * self._ns
-            ),
+            index=params.index,
         )
 
     def iter_calc_params(
@@ -1006,21 +1004,23 @@ class EMBP(BiomarkerPoolBase):
         outcome_type: Literal["continue", "binary"],
         max_iter: int = 500,
         max_iter_inner: int = 100,
-        thre: None | float = None,
-        thre_inner: None | float = None,
-        nsample_IS: int = 1000,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta2: float = 1e-5,
+        delta2_inner: float = 1e-7,
+        n_importance_sampling: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
-        variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
+        # variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
         thre_var_est: None | float = None,
-        boostrap_samples: int = 200,
+        # boostrap_samples: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
         ema: float = 0.1,
         use_gpu: bool = False,
     ) -> None:
-        if variance_esitmate_method == "boostrap":
-            raise NotImplementedError
+        # if variance_esitmate_method == "boostrap":
+        #     raise NotImplementedError
         assert outcome_type in ["continue", "binary"]
         if use_gpu:
             try:
@@ -1036,23 +1036,21 @@ class EMBP(BiomarkerPoolBase):
         self.outcome_type_ = outcome_type
         self.max_iter_ = max_iter
         self.max_iter_inner_ = max_iter_inner
-        self.thre_ = (
-            thre
-            if thre is not None
-            else {"continue": 1e-10, "binary": 1e-3}[outcome_type]
-        )
-        self.thre_inner_ = thre_inner if thre_inner is not None else 1e-10
-        self.nsample_IS_ = nsample_IS
+        self.delta1_ = delta1
+        self.delta1_inner_ = delta1_inner
+        self.delta2_ = delta2
+        self.delta2_inner_ = delta2_inner
+        self.nIS_ = n_importance_sampling
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
-        self.var_est_method_ = variance_esitmate_method
+        # self.var_est_method_ = variance_esitmate_method
         self.thre_var_est_ = (
             thre_var_est
             if thre_var_est is not None
             else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
         )
-        self.boostrap_samples_ = boostrap_samples
+        # self.boostrap_samples_ = boostrap_samples
         self.ema_ = ema
         self.use_gpu_ = use_gpu
 
@@ -1071,15 +1069,17 @@ class EMBP(BiomarkerPoolBase):
     ) -> None:
         if self.outcome_type_ == "continue":
             self._estimator = ContinueEM(
-                X,
-                S,
-                W,
-                Y,
-                Z,
-                self.max_iter_,
-                self.thre_,
-                self.max_iter_inner_,
-                self.thre_inner_,
+                X=X,
+                S=S,
+                W=W,
+                Y=Y,
+                Z=Z,
+                max_iter=self.max_iter_,
+                max_iter_inner=self.max_iter_inner_,
+                delta1=self.delta1_,
+                delta1_inner=self.delta1_inner_,
+                delta2=self.delta2_,
+                delta2_inner=self.delta2_inner_,
                 pbar=self.pbar_,
                 thre_var_est=self.thre_var_est_,
             )
@@ -1099,7 +1099,7 @@ class EMBP(BiomarkerPoolBase):
                     self.thre_inner_,
                     pbar=self.pbar_,
                     lr=self.lr_,
-                    nsample_IS=self.nsample_IS_,
+                    nsample_IS=self.nIS_,
                     thre_var_est=self.thre_var_est_,
                     ema=self.ema_,
                     device="cuda:0",
@@ -1117,7 +1117,7 @@ class EMBP(BiomarkerPoolBase):
                     self.thre_inner_,
                     pbar=self.pbar_,
                     lr=self.lr_,
-                    nsample_IS=self.nsample_IS_,
+                    nsample_IS=self.nIS_,
                     thre_var_est=self.thre_var_est_,
                     ema=self.ema_,
                 )
@@ -1125,66 +1125,12 @@ class EMBP(BiomarkerPoolBase):
             raise NotImplementedError
         self._estimator.run()
         self.params_ = self._estimator.params_.to_frame("estimate")
+        self.parmas_hist_ = self._estimator.params_hist_
 
         if not self.var_est_:
             return
 
-        if self.var_est_method_ == "sem":
-            params_var_ = self._estimator.estimate_variance()
-        elif self.var_est_method_ == "boostrap":
-            raise NotImplementedError
-            # params_bootstrap = []
-            # with logging_redirect_tqdm(loggers=[logger]):
-            #     for _ in tqdm(
-            #         range(self.boostrap_samples_), disable=not self.pbar_
-            #     ):
-            #         ind = self._rng.choice(
-            #             Y.shape[0], size=Y.shape[0], replace=True
-            #         )
-            #         X_, S_, W_, Y_, Z_ = (
-            #             X[ind],
-            #             S[ind],
-            #             W[ind],
-            #             Y[ind],
-            #             None if Z is None else Z[ind],
-            #         )
-            #         if self.outcome_type_ == "continue":
-            #             self._estimator = ContinueEM(
-            #                 X_,
-            #                 S_,
-            #                 W_,
-            #                 Y_,
-            #                 Z_,
-            #                 self.max_iter_,
-            #                 self.thre_,
-            #                 self.max_iter_inner_,
-            #                 self.thre_inner_,
-            #                 pbar=False,
-            #                 thre_var_est=self.thre_var_est_,
-            #             )
-            #         elif self.outcome_type_ == "binary":
-            #             self._estimator = BinaryEM(
-            #                 X_,
-            #                 S_,
-            #                 W_,
-            #                 Y_,
-            #                 Z_,
-            #                 self.max_iter_,
-            #                 self.thre_,
-            #                 self.max_iter_inner_,
-            #                 self.thre_inner_,
-            #                 pbar=False,
-            #                 lr=self.lr_,
-            #                 nsample_IS=self.nsample_IS_,
-            #                 thre_var_est=self.thre_var_est_,
-            #                 ema=self.ema_,
-            #             )
-            #         else:
-            #             raise NotImplementedError
-            #         self._estimator.run()
-            #         params_bootstrap.append(self._estimator.params_.values)
-            # params_bootstrap = np.stack(params_bootstrap)
-            # params_var_ = np.var(params_bootstrap, axis=0, ddof=1)
+        params_var_ = self._estimator.estimate_variance()
         self.params_["variance(log)"] = params_var_
         self.params_["std(log)"] = np.sqrt(params_var_)
         self.params_["CI_1"] = (
