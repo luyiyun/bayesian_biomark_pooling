@@ -101,10 +101,11 @@ class EM:
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
         delta1_inner: float = 1e-4,
-        delta2: float = 1e-5,
-        delta2_inner: float = 1e-7,
+        delta2: float = 1e-4,
+        delta2_inner: float = 1e-6,
+        delta1_var: float = 1e-2,
+        delta2_var: float = 1e-2,
         pbar: bool = True,
-        thre_var_est: float = 1e-3,
     ) -> None:
         self._X = X
         self._S = S
@@ -118,8 +119,9 @@ class EM:
         self._delta1_inner = delta1_inner
         self._delta2 = delta2
         self._delta2_inner = delta2_inner
+        self._delta1_var = delta1_var
+        self._delta2_var = delta2_var
         self._pbar = pbar
-        self._thre_var_est = thre_var_est
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -259,7 +261,7 @@ class EM:
         params_w_log = self.params_.copy()
         params_w_log.iloc[ind_sigma2] = np.log(params_w_log.iloc[ind_sigma2])
 
-        finish_row_ind = []
+        rind_uncovg = list(range(n_params))
         R = []
         with logging_redirect_tqdm(loggers=[logger_embp]):
             for t in tqdm(
@@ -267,17 +269,11 @@ class EM:
                 desc="Estimate Variance: ",
                 disable=not self._pbar,
             ):
-                params_i = self.params_hist_.iloc[t, :]
-                Rt = []
-                for j in range(n_params):
-
-                    # 如果某一行已经收敛，则不行再去进行计算了
-                    if t > 0 and j in finish_row_ind:
-                        Rt.append(R[-1][j, :])
-                        continue
-
+                params_t = self.params_hist_.iloc[t, :]
+                Rt = np.zeros((n_params, n_params)) if t == 0 else R[-1].copy()
+                for j in rind_uncovg:
                     inpt = self.params_.copy()
-                    x = inpt.iloc[j] = params_i.iloc[j]
+                    x = inpt.iloc[j] = params_t.iloc[j]
 
                     self.e_step(inpt)
                     oupt = self.m_step(inpt)
@@ -288,22 +284,26 @@ class EM:
                         x = np.log(x)
 
                     # 计算差值比来作为导数的估计
-                    Rt.append(
-                        (oupt.values - params_w_log.values)
-                        / (x - params_w_log.iloc[j])
+                    Rt[j, :] = (oupt.values - params_w_log.values) / (
+                        x - params_w_log.iloc[j]
                     )
-                Rt = np.stack(Rt, axis=0)
 
                 # 看一下有哪些行完成了收敛
                 if t > 0:
-                    finish_row_ind = np.nonzero(
-                        np.max(np.abs(Rt - R[-1]), axis=1) < self._thre_var_est
-                    )[0]
-
-                    logger_embp.info("finished_row:" + str(finish_row_ind))
+                    rdiff = np.max(
+                        np.abs(Rt - R[-1])
+                        / (np.abs(R[-1]) + self._delta1_var),
+                        axis=1,
+                    )
+                    new_rind_uncovg = np.nonzero(rdiff >= self._delta2_var)[0]
+                    if len(new_rind_uncovg) < len(rind_uncovg):
+                        logger_embp.info(
+                            "unfinished row ind:" + str(rind_uncovg)
+                        )
+                    rind_uncovg = new_rind_uncovg
 
                 R.append(Rt)
-                if len(finish_row_ind) == n_params:
+                if len(rind_uncovg) == 0:
                     break
             else:
                 logger_embp.warn("estimate variance does not converge.")
@@ -1008,11 +1008,13 @@ class EMBP(BiomarkerPoolBase):
         delta1_inner: float = 1e-4,
         delta2: float = 1e-5,
         delta2_inner: float = 1e-7,
+        delta1_var: float = 1e-2,
+        delta2_var: float = 1e-1,
         n_importance_sampling: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
         # variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
-        thre_var_est: None | float = None,
+        # thre_var_est: None | float = None,
         # boostrap_samples: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
@@ -1040,16 +1042,18 @@ class EMBP(BiomarkerPoolBase):
         self.delta1_inner_ = delta1_inner
         self.delta2_ = delta2
         self.delta2_inner_ = delta2_inner
+        self.delta1_var_ = delta1_var
+        self.delta2_var_ = delta2_var
         self.nIS_ = n_importance_sampling
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
         # self.var_est_method_ = variance_esitmate_method
-        self.thre_var_est_ = (
-            thre_var_est
-            if thre_var_est is not None
-            else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
-        )
+        # self.thre_var_est_ = (
+        #     thre_var_est
+        #     if thre_var_est is not None
+        #     else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
+        # )
         # self.boostrap_samples_ = boostrap_samples
         self.ema_ = ema
         self.use_gpu_ = use_gpu
@@ -1080,8 +1084,9 @@ class EMBP(BiomarkerPoolBase):
                 delta1_inner=self.delta1_inner_,
                 delta2=self.delta2_,
                 delta2_inner=self.delta2_inner_,
+                delta1_var=self.delta1_var_,
+                delta2_var=self.delta2_var_,
                 pbar=self.pbar_,
-                thre_var_est=self.thre_var_est_,
             )
         elif self.outcome_type_ == "binary":
             if self.use_gpu_:

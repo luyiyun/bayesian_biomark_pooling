@@ -2,8 +2,7 @@ import logging
 import os
 
 import numpy as np
-
-# import pandas as pd
+import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -11,7 +10,7 @@ from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling.embp import EMBP
 
 
-def temp_test_continue():
+def temp_test_continue(ci=False):
     log_level = logging.INFO
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
@@ -26,38 +25,50 @@ def temp_test_continue():
     df = simulator.simulate()
     model = EMBP(
         outcome_type="continue",
-        variance_estimate=False,
+        variance_estimate=ci,
         pbar=True,
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
     params = model.params_
     params_hist = model._estimator.params_hist_
-    # R = model._estimator._R
+    if ci:
+        R = model._estimator._R
 
     model.params_.to_csv(os.path.join(root, "temp_params.csv"))
     params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
-    # np.save("./temp_R.npy", R)
+    if ci:
+        np.save("./temp_R.npy", R)
 
-    # params = pd.read_csv("./temp_params.csv", index_col=0)
-    # params_hist = pd.read_csv("./temp_hist.csv", index_col=0)
-    # R = np.load("./temp_R.npy")
     print(params)
 
-    nr = int(np.sqrt(params.shape[0]))
-    nc = (params.shape[0] + 1) // nr
-    fig, axs = plt.subplots(
-        nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
+    def plot_params_hist(
+        params_hist: np.ndarray, names: np.ndarray, savefn: str
+    ):
+        nparams = params_hist.shape[1]
+        nr = int(np.sqrt(nparams))
+        nc = (nparams + 1) // nr
+        fig, axs = plt.subplots(
+            nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
+        )
+        axs = axs.flatten()
+        for i in range(nparams):
+            pd.Series(params_hist[:, i]).plot(ax=axs[i])
+            axs[i].set_title(names[i])
+        fig.tight_layout()
+        fig.savefig(savefn)
+
+    plot_params_hist(
+        params_hist.values,
+        params_hist.columns.values,
+        os.path.join(root, "params_hist.png"),
     )
-    axs = axs.flatten()
-    for i in range(params_hist.shape[1]):
-        params_hist.iloc[:, i].plot(ax=axs[i])
-        axs[i].set_title(params.index[i])
-    # df = pd.DataFrame(R[:, 14, :], columns=params_hist.columns)
-    # df.plot(ax=axs[1])
-    fig.tight_layout()
-    fig.savefig(os.path.join(root, "params_hist.png"))
-    # plt.show()
+    if ci:
+        plot_params_hist(
+            R[:, 14, :],
+            params_hist.columns.values,
+            os.path.join(root, "R_beta_x.png"),
+        )
 
 
 def temp_test_binary():
@@ -125,7 +136,7 @@ def trial_continue(ci=False):
 
     simulator = Simulator(
         type_outcome="continue",
-        beta_x=1.0,
+        beta_x=0.,
         sigma2_y=[0.5, 1.0, 1.25, 1.5],
         beta_0=[0.5, 0.75, 1.25, 1.5],
     )
@@ -136,7 +147,7 @@ def trial_continue(ci=False):
         df = simulator.simulate()
         model = EMBP(
             outcome_type="continue",
-            variance_estimate=False,
+            variance_estimate=ci,
             pbar=False,
         )
         model.fit(
@@ -225,9 +236,9 @@ def trial_binary():
 
 
 def main():
-    # temp_test_continue()
+    # temp_test_continue(ci=True)
     # trial_binary()
-    trial_continue(ci=False)
+    trial_continue(ci=True)
 
 
 if __name__ == "__main__":
