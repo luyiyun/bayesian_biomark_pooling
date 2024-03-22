@@ -218,6 +218,33 @@ class Simulator:
         return self._parameters
 
     @property
+    def parameters_series(self):
+        index, res = [], []
+        for key in [
+            "mu_x",
+            "sigma2_x",
+            "a",
+            "b",
+            "sigma2_e",
+            "beta_x",
+            "beta_0",
+            "beta_z",
+            "sigma2_y",
+        ]:
+            val = self._parameters[key]
+            if val is None:
+                continue
+            elif isinstance(val, np.ndarray):
+                val = val.tolist()
+                res.extend(val)
+                index.extend([f"{key}-{i}" for i in range(len(val))])
+            else:
+                res.append(val)
+                index.append(key)
+
+        return pd.Series(res, index=index)
+
+    @property
     def name(self):
         return self._name
 

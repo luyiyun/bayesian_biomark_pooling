@@ -31,6 +31,7 @@ develop = [
     "tqdm>=4.65.0",
     "openpyxl>=3.0.10",
     "seaborn>=0.12.2",
+    "statsmodels>=0.14.1",
     "build",
     "pytest",
 ]
