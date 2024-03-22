@@ -25,8 +25,8 @@ def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
     fig.savefig(savefn)
 
 
-def temp_test_continue(ci=False):
-    log_level = logging.INFO
+def temp_test_continue(ci=False, ve_method="bootstrap"):
+    log_level = logging.WARNING
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
@@ -41,33 +41,28 @@ def temp_test_continue(ci=False):
     model = EMBP(
         outcome_type="continue",
         variance_estimate=ci,
+        variance_estimate_method=ve_method,
         pbar=True,
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
     params = model.params_
     params_hist = model.params_hist_
-    if ci:
-        R = model._estimator._R
-
-    model.params_.to_csv(os.path.join(root, "temp_params.csv"))
-    params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
-    if ci:
-        np.save("./temp_R.npy", R)
-
-    print(params)
-
     plot_params_hist(
         params_hist.values,
         params_hist.columns.values,
         os.path.join(root, "params_hist.png"),
     )
-    if ci:
+    if ci and (ve_method == "sem"):
+        R = model._estimator._R
+        np.save("./temp_R.npy", R)
         plot_params_hist(
             R[:, 14, :],
             params_hist.columns.values,
             os.path.join(root, "R_beta_x.png"),
         )
+
+    print(params)
 
 
 def temp_test_binary(ci=False):
@@ -86,6 +81,7 @@ def temp_test_binary(ci=False):
     model = EMBP(
         outcome_type="binary",
         variance_estimate=ci,
+        variance_estimate_method="bootstrap",
         max_iter=300,
         pbar=True,
         n_importance_sampling=1000,
@@ -95,27 +91,16 @@ def temp_test_binary(ci=False):
 
     params = model.params_
     params_hist = model.params_hist_
-    if ci:
-        R = model._estimator._R
-
     model.params_.to_csv(os.path.join(root, "temp_params.csv"))
     params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
-    if ci:
-        np.save("./temp_R.npy", R)
-
-    print(params)
 
     plot_params_hist(
         params_hist.values,
         params_hist.columns.values,
         os.path.join(root, "params_hist.png"),
     )
-    if ci:
-        plot_params_hist(
-            R[:, 14, :],
-            params_hist.columns.values,
-            os.path.join(root, "R_beta_x.png"),
-        )
+
+    print(params)
 
 
 def trial_continue(ci=False):
@@ -227,9 +212,9 @@ def trial_binary(ci=False):
 
 
 def main():
-    # temp_test_continue(ci=True)
-    # temp_test_binary(ci=False)
-    trial_binary(ci=False)
+    # temp_test_continue(ci=True, ve_method="bootstrap")
+    temp_test_binary(ci=True)
+    # trial_binary(ci=False)
     # trial_continue(ci=True)
 
 

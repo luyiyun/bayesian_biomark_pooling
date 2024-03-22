@@ -11,6 +11,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 # import pandas as pd
 from numpy import ndarray
+from numpy.random import Generator
 
 from .base import BiomarkerPoolBase
 from .logger import logger_embp
@@ -98,11 +99,6 @@ class EM:
 
     def __init__(
         self,
-        X: ndarray,
-        S: ndarray,
-        W: ndarray,
-        Y: ndarray,
-        Z: ndarray | None = None,
         max_iter: int = 100,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
@@ -113,12 +109,6 @@ class EM:
         delta2_var: float = 1e-2,
         pbar: bool = True,
     ) -> None:
-        self._X = X
-        self._S = S
-        self._W = W
-        self._Y = Y
-        self._Z = Z
-
         self._max_iter = max_iter
         self._max_iter_inner = max_iter_inner
         self._delta1 = delta1
@@ -128,6 +118,20 @@ class EM:
         self._delta1_var = delta1_var
         self._delta2_var = delta2_var
         self._pbar = pbar
+
+    def register_data(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+    ):
+        self._X = X
+        self._S = S
+        self._W = W
+        self._Y = Y
+        self._Z = Z
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -747,11 +751,6 @@ class BinaryEM(EM):
 
     def __init__(
         self,
-        X: ndarray,
-        S: ndarray,
-        W: ndarray,
-        Y: ndarray,
-        Z: ndarray | None = None,
         max_iter: int = 500,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
@@ -765,11 +764,6 @@ class BinaryEM(EM):
         n_importance_sampling: int = 1000,
     ) -> None:
         super().__init__(
-            X=X,
-            S=S,
-            W=W,
-            Y=Y,
-            Z=Z,
             max_iter=max_iter,
             max_iter_inner=max_iter_inner,
             delta1=delta1,
@@ -979,6 +973,65 @@ class BinaryEM(EM):
         )
 
 
+def bootstrap_estimator(
+    estimator: EM,
+    X: ndarray,
+    Y: ndarray,
+    W: ndarray,
+    S: ndarray,
+    Z: ndarray | None = None,
+    Y_type: Literal["continue", "binary"] = False,
+    n_repeat: int = 200,
+    seed: int | None | Generator = 0,
+    pbar: bool = True,
+) -> pd.DataFrame:
+    if not isinstance(seed, Generator):
+        seed = np.random.default_rng(seed)
+
+    Svals = np.unique(S)
+    is_m = pd.isnull(X)
+    not_m = ~is_m
+    if Y_type == "binary":
+        Yvals = np.unique(Y)
+
+    res = []
+    estimator._pbar = False  # 将内部的所有tqdm去掉
+    for _ in tqdm(range(n_repeat), desc="Bootstrap: ", disable=not pbar):
+        ind_bootstrap = []
+        for si in Svals:
+            for is_i in [is_m, not_m]:
+                if Y_type == "continue":
+                    ind = np.nonzero((S == si) & is_i)[0]
+                    if len(ind) == 0:
+                        continue
+                    ind_choice = seed.choice(ind, len(ind), replace=True)
+                    ind_bootstrap.append(ind_choice)
+                elif Y_type == "binary":
+                    for yi in Yvals:
+                        ind = np.nonzero((S == si) & (Y == yi) & is_i)[0]
+                        if len(ind) == 0:
+                            continue
+                        ind_choice = seed.choice(ind, len(ind), replace=True)
+                        ind_bootstrap.append(ind_choice)
+                else:
+                    raise NotImplementedError
+        ind_bootstrap = np.concatenate(ind_bootstrap)
+
+        Xi, Yi, Wi, Si, Zi = (
+            X[ind_bootstrap],
+            Y[ind_bootstrap],
+            W[ind_bootstrap],
+            S[ind_bootstrap],
+            None if Z is None else Z[ind_bootstrap],
+        )
+
+        estimator.register_data(Xi, Si, Wi, Yi, Zi)
+        estimator.run()
+        res.append(estimator.params_)
+
+    return pd.concat(res, axis=1).T
+
+
 class EMBP(BiomarkerPoolBase):
 
     def __init__(
@@ -995,12 +1048,14 @@ class EMBP(BiomarkerPoolBase):
         n_importance_sampling: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
+        variance_estimate_method: Literal["sem", "bootstrap"] = "sem",
+        n_bootstrap: int = 200,
         pbar: bool = True,
-        seed: int | None = 0,
-        ema: float = 0.1,
+        seed: int | None = None,
         use_gpu: bool = False,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
+        assert variance_estimate_method in ["sem", "bootstrap"]
         if use_gpu:
             try:
                 import torch
@@ -1011,6 +1066,10 @@ class EMBP(BiomarkerPoolBase):
                 )
         if use_gpu and outcome_type == "continue":
             raise NotImplementedError
+        if outcome_type == "binary" and variance_estimate_method == "sem":
+            raise NotImplementedError(
+                "use bootstrap for outcome_type = binary"
+            )
 
         self.outcome_type_ = outcome_type
         self.max_iter_ = max_iter
@@ -1025,10 +1084,12 @@ class EMBP(BiomarkerPoolBase):
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
-        self.ema_ = ema
+        self.var_est_method_ = variance_estimate_method
+        self.n_bootstrap_ = n_bootstrap
         self.use_gpu_ = use_gpu
+        self.seed_ = seed
 
-        if use_gpu:
+        if use_gpu and seed is not None:
             torch.random.manual_seed(seed)
         else:
             self._rng = np.random.default_rng(seed)
@@ -1043,11 +1104,6 @@ class EMBP(BiomarkerPoolBase):
     ) -> None:
         if self.outcome_type_ == "continue":
             self._estimator = ContinueEM(
-                X=X,
-                S=S,
-                W=W,
-                Y=Y,
-                Z=Z,
                 max_iter=self.max_iter_,
                 max_iter_inner=self.max_iter_inner_,
                 delta1=self.delta1_,
@@ -1063,11 +1119,6 @@ class EMBP(BiomarkerPoolBase):
                 from .embp_gpu import BinaryEMTorch
 
                 self._estimator = BinaryEMTorch(
-                    X=X,
-                    S=S,
-                    W=W,
-                    Y=Y,
-                    Z=Z,
                     max_iter=self.max_iter_,
                     max_iter_inner=self.max_iter_inner_,
                     delta1=self.delta1_,
@@ -1081,11 +1132,6 @@ class EMBP(BiomarkerPoolBase):
                 )
             else:
                 self._estimator = BinaryEM(
-                    X=X,
-                    S=S,
-                    W=W,
-                    Y=Y,
-                    Z=Z,
                     max_iter=self.max_iter_,
                     max_iter_inner=self.max_iter_inner_,
                     delta1=self.delta1_,
@@ -1098,8 +1144,7 @@ class EMBP(BiomarkerPoolBase):
                     lr=self.lr_,
                     n_importance_sampling=self.nIS_,
                 )
-        else:
-            raise NotImplementedError
+        self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
         self.params_ = self._estimator.params_.to_frame("estimate")
         self.params_hist_ = self._estimator.params_hist_
@@ -1107,21 +1152,43 @@ class EMBP(BiomarkerPoolBase):
         if not self.var_est_:
             return
 
-        params_var_ = self._estimator.estimate_variance()
-        self.params_["variance(log)"] = params_var_
-        self.params_["std(log)"] = np.sqrt(params_var_)
-        self.params_["CI_1"] = (
-            self.params_["estimate"] - 1.96 * self.params_["std(log)"]
-        )
-        self.params_["CI_2"] = (
-            self.params_["estimate"] + 1.96 * self.params_["std(log)"]
-        )
-        is_sigma2 = self.params_.index.map(lambda x: x.startswith("sigma2"))
-        self.params_.loc[is_sigma2, "CI_1"] = np.exp(
-            np.log(self.params_.loc[is_sigma2, "estimate"])
-            - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-        )
-        self.params_.loc[is_sigma2, "CI_2"] = np.exp(
-            np.log(self.params_.loc[is_sigma2, "estimate"])
-            + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-        )
+        if self.var_est_method_ == "bootstrap":
+            # 使用boostrap方法
+            res_bootstrap = bootstrap_estimator(
+                estimator=self._estimator,
+                X=X,
+                Y=Y,
+                W=W,
+                S=S,
+                Z=Z,
+                Y_type=self.outcome_type_,
+                n_repeat=self.n_bootstrap_,
+                seed=self._rng,
+                pbar=self.pbar_
+            )
+            res_ci = np.quantile(
+                res_bootstrap.values, q=[0.025, 0.975], axis=0,
+            )
+            self.params_["CI_1"] = res_ci[0, :]
+            self.params_["CI_2"] = res_ci[1, :]
+        else:
+            params_var_ = self._estimator.estimate_variance()
+            self.params_["variance(log)"] = params_var_
+            self.params_["std(log)"] = np.sqrt(params_var_)
+            self.params_["CI_1"] = (
+                self.params_["estimate"] - 1.96 * self.params_["std(log)"]
+            )
+            self.params_["CI_2"] = (
+                self.params_["estimate"] + 1.96 * self.params_["std(log)"]
+            )
+            is_sigma2 = self.params_.index.map(
+                lambda x: x.startswith("sigma2")
+            )
+            self.params_.loc[is_sigma2, "CI_1"] = np.exp(
+                np.log(self.params_.loc[is_sigma2, "estimate"])
+                - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+            )
+            self.params_.loc[is_sigma2, "CI_2"] = np.exp(
+                np.log(self.params_.loc[is_sigma2, "estimate"])
+                + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+            )

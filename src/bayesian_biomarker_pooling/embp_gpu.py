@@ -91,11 +91,6 @@ class EMTorch:
 
     def __init__(
         self,
-        X: ndarray,
-        S: ndarray,
-        W: ndarray,
-        Y: ndarray,
-        Z: ndarray | None = None,
         max_iter: int = 100,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
@@ -109,15 +104,6 @@ class EMTorch:
     ) -> None:
         self._device = torch.device(device)
 
-        self._X = torch.tensor(X, device=self._device, dtype=torch.float64)
-        self._S = torch.tensor(S, device=self._device, dtype=torch.float64)
-        self._W = torch.tensor(W, device=self._device, dtype=torch.float64)
-        self._Y = torch.tensor(Y, device=self._device, dtype=torch.float64)
-        if Z is not None:
-            self._Z = torch.tensor(Z, device=self._device, dtype=torch.float64)
-        else:
-            self._Z = None
-
         self._max_iter = max_iter
         self._max_iter_inner = max_iter_inner
         self._delta1 = delta1
@@ -127,6 +113,23 @@ class EMTorch:
         self._delta1_var = delta1_var
         self._delta2_var = delta2_var
         self._pbar = pbar
+
+    def register_data(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+    ):
+        self._X = torch.tensor(X, device=self._device, dtype=torch.float64)
+        self._S = torch.tensor(S, device=self._device, dtype=torch.float64)
+        self._W = torch.tensor(W, device=self._device, dtype=torch.float64)
+        self._Y = torch.tensor(Y, device=self._device, dtype=torch.float64)
+        if Z is not None:
+            self._Z = torch.tensor(Z, device=self._device, dtype=torch.float64)
+        else:
+            self._Z = None
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -362,11 +365,6 @@ class BinaryEMTorch(EMTorch):
 
     def __init__(
         self,
-        X: ndarray,
-        S: ndarray,
-        W: ndarray,
-        Y: ndarray,
-        Z: ndarray | None = None,
         max_iter: int = 100,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
@@ -381,11 +379,6 @@ class BinaryEMTorch(EMTorch):
         device: str = "cuda:0",
     ) -> None:
         super().__init__(
-            X=X,
-            S=S,
-            W=W,
-            Y=Y,
-            Z=Z,
             max_iter=max_iter,
             max_iter_inner=max_iter_inner,
             delta1=delta1,
@@ -589,68 +582,3 @@ class BinaryEMTorch(EMTorch):
         if self._Z is not None:
             params["beta_z"] = beta_z
         return params
-
-    # def run(self):  # 要使用滑动平均技术
-
-    #     def to_series(params: dict[str, Tensor]):
-    #         names, values = [], []
-    #         for k in [
-    #             "mu_x",
-    #             "sigma2_x",
-    #             "a",
-    #             "b",
-    #             "sigma2_w",
-    #             "beta_x",
-    #             "beta_0",
-    #             "beta_z",
-    #         ]:
-    #             if k not in params:
-    #                 continue
-    #             tensor = params[k]
-    #             if tensor.ndim == 0:
-    #                 names.append(k)
-    #                 tensor = tensor.unsqueeze(0)
-    #             else:
-    #                 names.extend([k] * tensor.shape[0])
-    #             values.append(tensor)
-    #         return pd.Series(torch.cat(values).cpu().numpy(), index=names)
-
-    #     self.prepare()
-
-    #     params = self.init()
-    #     params_ema = params_series = to_series(params)
-    #     self.params_hist_ori_ = [params_series]
-    #     self.params_hist_ = [params_ema]
-    #     with logging_redirect_tqdm(loggers=[logger_embp]):
-    #         for iter_i in tqdm(
-    #             range(1, self._max_iter + 1),
-    #             desc="EM: ",
-    #             disable=not self._pbar,
-    #         ):
-
-    #             self.e_step(params)
-    #             params = self.m_step(params)
-
-    #             params_series = to_series(params)
-    #             self.params_hist_ori_.append(params_series)
-    #             params_ema = (
-    #                 self._ema * params_series + (1 - self._ema) * params_ema
-    #             )
-    #             self.params_hist_.append(params_ema)
-
-    #             diff = np.max(np.abs(params_ema - self.params_hist_[-2]))
-    #             logger_embp.info(
-    #                 f"EM iteration {iter_i}: difference is {diff: .4f}"
-    #             )
-    #             if diff < self._thre:
-    #                 self.iter_convergence_ = iter_i
-    #                 break
-    #         else:
-    #             logger_embp.warning(
-    #                 f"EM iteration (max_iter={self._max_iter}) "
-    #                 "doesn't converge"
-    #             )
-
-    #     self.params_ = params_ema
-    #     self.params_hist_ori_ = pd.concat(self.params_hist_ori_, axis=1).T
-    #     self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
