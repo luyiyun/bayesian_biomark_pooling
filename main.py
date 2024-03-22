@@ -25,7 +25,7 @@ def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
     fig.savefig(savefn)
 
 
-def temp_test_continue(ci=False, ve_method="bootstrap"):
+def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
     log_level = logging.WARNING
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
@@ -37,12 +37,13 @@ def temp_test_continue(ci=False, ve_method="bootstrap"):
     os.makedirs(root, exist_ok=True)
 
     simulator = Simulator(type_outcome="continue")
-    df = simulator.simulate()
+    df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="continue",
         variance_estimate=ci,
         variance_estimate_method=ve_method,
         pbar=True,
+        seed=seed
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
@@ -65,8 +66,8 @@ def temp_test_continue(ci=False, ve_method="bootstrap"):
     print(params)
 
 
-def temp_test_binary(ci=False):
-    log_level = logging.INFO
+def temp_test_binary(ci=False, seed=0):
+    log_level = logging.WARNING
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
@@ -77,7 +78,7 @@ def temp_test_binary(ci=False):
     os.makedirs(root, exist_ok=True)
 
     simulator = Simulator(type_outcome="binary")
-    df = simulator.simulate()
+    df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="binary",
         variance_estimate=ci,
@@ -86,6 +87,7 @@ def temp_test_binary(ci=False):
         pbar=True,
         n_importance_sampling=1000,
         use_gpu=True,
+        seed=seed
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 

@@ -762,6 +762,7 @@ class BinaryEM(EM):
         pbar: bool = True,
         lr: float = 1.0,
         n_importance_sampling: int = 1000,
+        seed: int | None | Generator = None,
     ) -> None:
         super().__init__(
             max_iter=max_iter,
@@ -774,6 +775,8 @@ class BinaryEM(EM):
             delta2_var=delta2_var,
             pbar=pbar,
         )
+        # 如果是Generator，则default_rng会直接返回它自身
+        self._seed = np.random.default_rng(seed)
         self._lr = lr
         self._nIS = n_importance_sampling
 
@@ -878,7 +881,9 @@ class BinaryEM(EM):
         norm_lap = norm(loc=Xm, scale=1 / np.sqrt(hessian))
 
         # 进行IS采样
-        self._XIS = norm_lap.rvs(size=(self._nIS, self._n_m))  # N x n_m
+        self._XIS = norm_lap.rvs(
+            size=(self._nIS, self._n_m), random_state=self._seed
+        )  # N x n_m
 
         # 计算对应的(normalized) importance weights
         pIS = log_expit(
@@ -982,11 +987,10 @@ def bootstrap_estimator(
     Z: ndarray | None = None,
     Y_type: Literal["continue", "binary"] = False,
     n_repeat: int = 200,
-    seed: int | None | Generator = 0,
+    seed: int | None | Generator = None,
     pbar: bool = True,
 ) -> pd.DataFrame:
-    if not isinstance(seed, Generator):
-        seed = np.random.default_rng(seed)
+    seed = np.random.default_rng(seed)
 
     Svals = np.unique(S)
     is_m = pd.isnull(X)
@@ -1051,7 +1055,7 @@ class EMBP(BiomarkerPoolBase):
         variance_estimate_method: Literal["sem", "bootstrap"] = "sem",
         n_bootstrap: int = 200,
         pbar: bool = True,
-        seed: int | None = None,
+        seed: int | None = 0,
         use_gpu: bool = False,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
@@ -1087,12 +1091,10 @@ class EMBP(BiomarkerPoolBase):
         self.var_est_method_ = variance_estimate_method
         self.n_bootstrap_ = n_bootstrap
         self.use_gpu_ = use_gpu
-        self.seed_ = seed
+        self.seed_ = np.random.default_rng(seed)
 
         if use_gpu and seed is not None:
             torch.random.manual_seed(seed)
-        else:
-            self._rng = np.random.default_rng(seed)
 
     def fit(
         self,
@@ -1143,6 +1145,7 @@ class EMBP(BiomarkerPoolBase):
                     pbar=self.pbar_,
                     lr=self.lr_,
                     n_importance_sampling=self.nIS_,
+                    seed=self.seed_
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
@@ -1163,11 +1166,13 @@ class EMBP(BiomarkerPoolBase):
                 Z=Z,
                 Y_type=self.outcome_type_,
                 n_repeat=self.n_bootstrap_,
-                seed=self._rng,
-                pbar=self.pbar_
+                seed=self.seed_,
+                pbar=self.pbar_,
             )
             res_ci = np.quantile(
-                res_bootstrap.values, q=[0.025, 0.975], axis=0,
+                res_bootstrap.values,
+                q=[0.025, 0.975],
+                axis=0,
             )
             self.params_["CI_1"] = res_ci[0, :]
             self.params_["CI_2"] = res_ci[1, :]

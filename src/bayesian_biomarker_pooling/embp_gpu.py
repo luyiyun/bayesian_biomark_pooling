@@ -55,8 +55,10 @@ def newton_raphson_beta(
     max_iter: int = 100,
     delta1: float = 1e-3,
     delta2: float = 1e-4,
+    epsilon: float = 1e-3,
 ):
     beta_ = init_beta
+    epsilon = torch.diag(torch.full_like(init_beta, epsilon))
     for i in range(max_iter):
         p_o = torch.sigmoid(Xo_des @ beta_)  # ns
         p_m = torch.sigmoid(Xm_des @ beta_)  # N x nm
@@ -72,7 +74,14 @@ def newton_raphson_beta(
         )
         H = H_o + H_m
 
-        beta_delta = lr * torch.inverse(H) @ grad
+        # 有时候可能会得到这样的H，其对角元会=0。这是因为某个beta_0s值非常大，导致
+        # p_o或p_m的值接近1（或者反过来），则(1-p)的值非常接近0，进而引发的问题。
+        if (torch.diag(H) < epsilon).any():
+            # 这里解决的办法是将算法替换为梯度下降法
+            beta_delta = lr * grad
+            tqdm.write(str(torch.diag(H)))
+        else:
+            beta_delta = lr * torch.inverse(H) @ grad
         beta_ -= beta_delta
 
         rdiff = (beta_delta.abs() / (beta_.abs() + delta1)).max()
