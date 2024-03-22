@@ -10,6 +10,23 @@ from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling.embp import EMBP
 
 
+def plot_params_hist(
+    params_hist: np.ndarray, names: np.ndarray, savefn: str
+):
+    nparams = params_hist.shape[1]
+    nr = int(np.sqrt(nparams))
+    nc = (nparams + 1) // nr
+    fig, axs = plt.subplots(
+        nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
+    )
+    axs = axs.flatten()
+    for i in range(nparams):
+        pd.Series(params_hist[:, i]).plot(ax=axs[i])
+        axs[i].set_title(names[i])
+    fig.tight_layout()
+    fig.savefig(savefn)
+
+
 def temp_test_continue(ci=False):
     log_level = logging.INFO
     logger = logging.getLogger("EMBP")
@@ -31,7 +48,7 @@ def temp_test_continue(ci=False):
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
     params = model.params_
-    params_hist = model._estimator.params_hist_
+    params_hist = model.params_hist_
     if ci:
         R = model._estimator._R
 
@@ -41,22 +58,6 @@ def temp_test_continue(ci=False):
         np.save("./temp_R.npy", R)
 
     print(params)
-
-    def plot_params_hist(
-        params_hist: np.ndarray, names: np.ndarray, savefn: str
-    ):
-        nparams = params_hist.shape[1]
-        nr = int(np.sqrt(nparams))
-        nc = (nparams + 1) // nr
-        fig, axs = plt.subplots(
-            nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
-        )
-        axs = axs.flatten()
-        for i in range(nparams):
-            pd.Series(params_hist[:, i]).plot(ax=axs[i])
-            axs[i].set_title(names[i])
-        fig.tight_layout()
-        fig.savefig(savefn)
 
     plot_params_hist(
         params_hist.values,
@@ -71,8 +72,8 @@ def temp_test_continue(ci=False):
         )
 
 
-def temp_test_binary():
-    log_level = logging.WARNING
+def temp_test_binary(ci=False):
+    log_level = logging.INFO
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
@@ -86,46 +87,36 @@ def temp_test_binary():
     df = simulator.simulate()
     model = EMBP(
         outcome_type="binary",
-        max_iter=500,
-        variance_estimate=False,
-        variance_esitmate_method="sem",
-        thre=1e-3,
-        thre_inner=1e-10,
-        thre_var_est=1e-4,
+        variance_estimate=ci,
         pbar=True,
-        n_importance_sampling=10000,
-        ema=0.1,
+        n_importance_sampling=3000,
         use_gpu=True,
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
 
     params = model.params_
-    params_hist = model._estimator.params_hist_
-    # R = model._estimator._R
+    params_hist = model.params_hist_
+    if ci:
+        R = model._estimator._R
 
     model.params_.to_csv(os.path.join(root, "temp_params.csv"))
     params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
-    # np.save("./temp_R.npy", R)
+    if ci:
+        np.save("./temp_R.npy", R)
 
-    # params = pd.read_csv("./temp_params.csv", index_col=0)
-    # params_hist = pd.read_csv("./temp_hist.csv", index_col=0)
-    # R = np.load("./temp_R.npy")
     print(params)
 
-    nr = int(np.sqrt(params.shape[0]))
-    nc = (params.shape[0] + 1) // nr
-    fig, axs = plt.subplots(
-        nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
+    plot_params_hist(
+        params_hist.values,
+        params_hist.columns.values,
+        os.path.join(root, "params_hist.png"),
     )
-    axs = axs.flatten()
-    for i in range(params_hist.shape[1]):
-        params_hist.iloc[:, i].plot(ax=axs[i])
-        axs[i].set_title(params.index[i])
-    # df = pd.DataFrame(R[:, 14, :], columns=params_hist.columns)
-    # df.plot(ax=axs[1])
-    fig.tight_layout()
-    fig.savefig(os.path.join(root, "params_hist.png"))
-    # plt.show()
+    if ci:
+        plot_params_hist(
+            R[:, 14, :],
+            params_hist.columns.values,
+            os.path.join(root, "R_beta_x.png"),
+        )
 
 
 def trial_continue(ci=False):
@@ -180,7 +171,7 @@ def trial_continue(ci=False):
     print(f", Cov Rate is {cov_rate: .6f}" if ci else "")
 
 
-def trial_binary():
+def trial_binary(ci=False):
     # 模拟实验：
     # 1. 不同样本量，不同缺失比例下的效果,
     # 2. 一类错误 & 效能
@@ -197,7 +188,7 @@ def trial_binary():
     for i in tqdm(range(100)):
         df = simulator.simulate()
         model = EMBP(
-            outcome_type="binary", variance_estimate=False, pbar=False, ema=0.5
+            outcome_type="binary", variance_estimate=False, pbar=False
         )
         model.fit(
             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
@@ -233,8 +224,9 @@ def trial_binary():
 
 def main():
     # temp_test_continue(ci=True)
+    temp_test_binary(ci=False)
     # trial_binary()
-    trial_continue(ci=True)
+    # trial_continue(ci=True)
 
 
 if __name__ == "__main__":

@@ -21,7 +21,12 @@ def ols(x_des, y) -> np.ndarray:
 
 
 def logistic(
-    Xdes, y, max_iter: int = 100, thre: float = 1e-7, lr: float = 1.0
+    Xdes,
+    y,
+    lr: float = 1.0,
+    max_iter: int = 100,
+    delta1: float = 1e-3,
+    delta2: float = 1e-4,
 ):
     beta = np.zeros(Xdes.shape[1])
 
@@ -32,9 +37,9 @@ def logistic(
         delta = lr * np.linalg.inv(hessian) @ grad
         beta -= delta
 
-        diff = np.max(np.abs(delta))
-        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={diff:.4f}")
-        if diff < thre:
+        rdiff = np.max(np.abs(delta) / (np.abs(beta) + delta1))
+        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
+        if rdiff < delta2:
             break
     else:
         logger_embp.warning(
@@ -53,7 +58,8 @@ def newton_raphson_beta(
     wIS: ndarray,  # N x nm
     lr: float = 1.0,
     max_iter: int = 100,
-    thre: float = 1e-7,
+    delta1: float = 1e-3,
+    delta2: float = 1e-4,
 ):
     beta_ = init_beta
     for i in range(max_iter):
@@ -76,9 +82,9 @@ def newton_raphson_beta(
         beta_delta = lr * np.linalg.inv(H) @ grad
         beta_ -= beta_delta
 
-        diff = np.max(np.abs(beta_delta))
-        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={diff:.4f}")
-        if diff < thre:
+        rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
+        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
+        if rdiff < delta2:
             break
     else:
         logger_embp.warning(
@@ -278,7 +284,9 @@ class EM:
                         x = np.log(x)
                     # 计算差值比来作为导数的估计
                     dx = x - params_w_log.iloc[j]
-                    if dx == 0:  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
+                    if (
+                        dx == 0
+                    ):  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
                         continue
 
                     self.e_step(inpt)
@@ -744,17 +752,18 @@ class BinaryEM(EM):
         W: ndarray,
         Y: ndarray,
         Z: ndarray | None = None,
-        max_iter: int = 100,
-        thre: float = 0.00001,
+        max_iter: int = 500,
         max_iter_inner: int = 100,
-        thre_inner: float = 1e-7,
-        thre_var_est: float = 1e-3,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta1_var: float = 1e-2,
+        delta2: float = 1e-4,
+        delta2_inner: float = 1e-6,
+        delta2_var: float = 1e-2,
         pbar: bool = True,
         lr: float = 1.0,
-        nsample_IS: int = 1000,
-        ema: float = 0.5,  # 指数滑动平均的权重，1表示只用当前值
+        n_importance_sampling: int = 1000,
     ) -> None:
-        assert ema >= 0 and ema <= 1
         super().__init__(
             X=X,
             S=S,
@@ -762,15 +771,17 @@ class BinaryEM(EM):
             Y=Y,
             Z=Z,
             max_iter=max_iter,
-            thre=thre,
             max_iter_inner=max_iter_inner,
-            thre_inner=thre_inner,
-            thre_var_est=thre_var_est,
+            delta1=delta1,
+            delta1_inner=delta1_inner,
+            delta1_var=delta1_var,
+            delta2=delta2,
+            delta2_inner=delta2_inner,
+            delta2_var=delta2_var,
             pbar=pbar,
         )
         self._lr = lr
-        self._nIS = nsample_IS
-        self._ema = ema
+        self._nIS = n_importance_sampling
 
     def prepare(self):
         super().prepare()
@@ -798,9 +809,10 @@ class BinaryEM(EM):
         beta = logistic(
             Xo_des,
             self._Yo,
-            max_iter=self._max_iter_inner,
-            thre=self._max_iter_inner,
             lr=self._lr,
+            max_iter=self._max_iter_inner,
+            delta1=self._delta1_inner,
+            delta2=self._delta2_inner,
         )
 
         return pd.concat(
@@ -831,6 +843,7 @@ class BinaryEM(EM):
         sigma2_w_m_long = sigma2_w[self._ind_m_inv]
 
         # 使用newton-raphson方法得到Laplacian approximation
+        Xm = 0  # init
         b_m_long_2 = b_m_long**2
         beta_x_2 = beta_x**2
         grad_const = (
@@ -842,8 +855,6 @@ class BinaryEM(EM):
 
         Z_part_m = 0.0 if self._Z is None else self._Zm @ beta_z
         delta_part = beta_0_m_long + Z_part_m
-
-        Xm = 0  # np.random.randn(Wm.shape[0])
         for i in range(1, self._max_iter_inner + 1):
             p = expit(Xm * beta_x + delta_part)
             grad = beta_x * p + grad_mul * Xm + grad_const
@@ -852,11 +863,11 @@ class BinaryEM(EM):
             xdelta = self._lr * grad / hessian
             Xm -= xdelta
 
-            diff = np.max(np.abs(xdelta))
+            rdiff = np.max(np.abs(xdelta) / (np.abs(Xm) + self._delta1_inner))
             logger_embp.info(
-                f"E step Newton-Raphson: iter={i} diff={diff:.4f}"
+                f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
             )
-            if diff < self._thre_inner:
+            if rdiff < self._delta2_inner:
                 break
         else:
             logger_embp.warning(
@@ -885,6 +896,7 @@ class BinaryEM(EM):
             + (self._XIS - mu_x) ** 2 / sigma2_x
         )
         pIS = pIS - norm_lap.logpdf(self._XIS)
+        # NOTE: 尽管归一化因子对于求极值没有贡献，但有助于稳定训练
         self._WIS = softmax(pIS, axis=0)
 
         if logger_embp.level <= logging.INFO:
@@ -938,7 +950,8 @@ class BinaryEM(EM):
             wIS=self._WIS,
             lr=self._lr,
             max_iter=self._max_iter_inner,
-            thre=self._thre_inner,
+            delta1=self._delta1_inner,
+            delta2=self._delta2_inner,
         )
         beta_x, beta_0 = beta_[0], beta_[1 : (self._ns + 1)]
         beta_z = beta_[(self._ns + 1) :] if self._Z is not None else None
@@ -965,43 +978,6 @@ class BinaryEM(EM):
             ),
         )
 
-    def run(self):  # 要使用滑动平均技术
-        self.prepare()
-
-        params_ema = params = self.init()
-        self.params_hist_ori_ = [params]
-        self.params_hist_ = [params]
-        with logging_redirect_tqdm(loggers=[logger_embp]):
-            for iter_i in tqdm(
-                range(1, self._max_iter + 1),
-                desc="EM: ",
-                disable=not self._pbar,
-            ):
-
-                self.e_step(params)
-                params = self.m_step(params)
-                self.params_hist_ori_.append(params)
-
-                params_ema = self._ema * params + (1 - self._ema) * params_ema
-                self.params_hist_.append(params_ema)
-
-                diff = np.max(np.abs(params_ema - self.params_hist_[-2]))
-                logger_embp.info(
-                    f"EM iteration {iter_i}: difference is {diff: .4f}"
-                )
-                if diff < self._thre:
-                    self.iter_convergence_ = iter_i
-                    break
-            else:
-                logger_embp.warning(
-                    f"EM iteration (max_iter={self._max_iter}) "
-                    "doesn't converge"
-                )
-
-        self.params_ = params_ema
-        self.params_hist_ori_ = pd.concat(self.params_hist_ori_, axis=1).T
-        self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
-
 
 class EMBP(BiomarkerPoolBase):
 
@@ -1019,16 +995,11 @@ class EMBP(BiomarkerPoolBase):
         n_importance_sampling: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
-        # variance_esitmate_method: Literal["sem", "boostrap"] = "sem",
-        # thre_var_est: None | float = None,
-        # boostrap_samples: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
         ema: float = 0.1,
         use_gpu: bool = False,
     ) -> None:
-        # if variance_esitmate_method == "boostrap":
-        #     raise NotImplementedError
         assert outcome_type in ["continue", "binary"]
         if use_gpu:
             try:
@@ -1054,13 +1025,6 @@ class EMBP(BiomarkerPoolBase):
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
-        # self.var_est_method_ = variance_esitmate_method
-        # self.thre_var_est_ = (
-        #     thre_var_est
-        #     if thre_var_est is not None
-        #     else {"continue": 1e-4, "binary": 1e-2}[outcome_type]
-        # )
-        # self.boostrap_samples_ = boostrap_samples
         self.ema_ = ema
         self.use_gpu_ = use_gpu
 
@@ -1099,44 +1063,46 @@ class EMBP(BiomarkerPoolBase):
                 from .embp_gpu import BinaryEMTorch
 
                 self._estimator = BinaryEMTorch(
-                    X,
-                    S,
-                    W,
-                    Y,
-                    Z,
-                    self.max_iter_,
-                    self.thre_,
-                    self.max_iter_inner_,
-                    self.thre_inner_,
+                    X=X,
+                    S=S,
+                    W=W,
+                    Y=Y,
+                    Z=Z,
+                    max_iter=self.max_iter_,
+                    max_iter_inner=self.max_iter_inner_,
+                    delta1=self.delta1_,
+                    delta1_inner=self.delta1_inner_,
+                    delta2=self.delta2_,
+                    delta2_inner=self.delta2_inner_,
+                    delta1_var=self.delta1_var_,
+                    delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
-                    lr=self.lr_,
-                    nsample_IS=self.nIS_,
-                    thre_var_est=self.thre_var_est_,
-                    ema=self.ema_,
                     device="cuda:0",
                 )
             else:
                 self._estimator = BinaryEM(
-                    X,
-                    S,
-                    W,
-                    Y,
-                    Z,
-                    self.max_iter_,
-                    self.thre_,
-                    self.max_iter_inner_,
-                    self.thre_inner_,
+                    X=X,
+                    S=S,
+                    W=W,
+                    Y=Y,
+                    Z=Z,
+                    max_iter=self.max_iter_,
+                    max_iter_inner=self.max_iter_inner_,
+                    delta1=self.delta1_,
+                    delta1_inner=self.delta1_inner_,
+                    delta1_var=self.delta1_var_,
+                    delta2=self.delta2_,
+                    delta2_inner=self.delta2_inner_,
+                    delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
                     lr=self.lr_,
-                    nsample_IS=self.nIS_,
-                    thre_var_est=self.thre_var_est_,
-                    ema=self.ema_,
+                    n_importance_sampling=self.nIS_,
                 )
         else:
             raise NotImplementedError
         self._estimator.run()
         self.params_ = self._estimator.params_.to_frame("estimate")
-        self.parmas_hist_ = self._estimator.params_hist_
+        self.params_hist_ = self._estimator.params_hist_
 
         if not self.var_est_:
             return

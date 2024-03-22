@@ -18,9 +18,10 @@ def ols(x_des: Tensor, y: Tensor) -> Tensor:
 def logistic(
     Xdes: Tensor,
     y: Tensor,
-    max_iter: int = 100,
-    thre: float = 1e-7,
     lr: float = 1.0,
+    max_iter: int = 100,
+    delta1: float = 1e-3,
+    delta2: float = 1e-4,
 ):
     beta = torch.zeros(Xdes.shape[1]).to(Xdes)
 
@@ -31,9 +32,9 @@ def logistic(
         delta = lr * torch.inverse(hessian) @ grad
         beta -= delta
 
-        diff = delta.abs().max().item()
-        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={diff:.4f}")
-        if diff < thre:
+        rdiff = (delta.abs() / (beta.abs() + delta1)).max().item()
+        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
+        if rdiff < delta2:
             break
     else:
         logger_embp.warning(
@@ -52,7 +53,8 @@ def newton_raphson_beta(
     wIS: Tensor,  # N x nm
     lr: float = 1.0,
     max_iter: int = 100,
-    thre: float = 1e-7,
+    delta1: float = 1e-3,
+    delta2: float = 1e-4,
 ):
     beta_ = init_beta
     for i in range(max_iter):
@@ -73,9 +75,9 @@ def newton_raphson_beta(
         beta_delta = lr * torch.inverse(H) @ grad
         beta_ -= beta_delta
 
-        diff = beta_delta.abs().max()
-        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={diff:.4f}")
-        if diff < thre:
+        rdiff = (beta_delta.abs() / (beta_.abs() + delta1)).max()
+        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
+        if rdiff < delta2:
             break
     else:
         logger_embp.warning(
@@ -95,11 +97,14 @@ class EMTorch:
         Y: ndarray,
         Z: ndarray | None = None,
         max_iter: int = 100,
-        thre: float = 1e-5,
         max_iter_inner: int = 100,
-        thre_inner: float = 1e-7,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta2: float = 1e-4,
+        delta2_inner: float = 1e-6,
+        delta1_var: float = 1e-2,
+        delta2_var: float = 1e-2,
         pbar: bool = True,
-        thre_var_est: float = 1e-3,
         device: str = "cuda:0",
     ) -> None:
         self._device = torch.device(device)
@@ -114,11 +119,14 @@ class EMTorch:
             self._Z = None
 
         self._max_iter = max_iter
-        self._thre = thre
         self._max_iter_inner = max_iter_inner
-        self._thre_inner = thre_inner
+        self._delta1 = delta1
+        self._delta1_inner = delta1_inner
+        self._delta2 = delta2
+        self._delta2_inner = delta2_inner
+        self._delta1_var = delta1_var
+        self._delta2_var = delta2_var
         self._pbar = pbar
-        self._thre_var_est = thre_var_est
 
     def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
@@ -217,10 +225,34 @@ class EMTorch:
         raise NotImplementedError
 
     def run(self):
+
+        def to_series(params: dict[str, Tensor]):
+            names, values = [], []
+            for k in [
+                "mu_x",
+                "sigma2_x",
+                "a",
+                "b",
+                "sigma2_w",
+                "beta_x",
+                "beta_0",
+                "beta_z",
+            ]:
+                if k not in params:
+                    continue
+                tensor = params[k]
+                if tensor.ndim == 0:
+                    names.append(k)
+                    tensor = tensor.unsqueeze(0)
+                else:
+                    names.extend([k] * tensor.shape[0])
+                values.append(tensor)
+            return pd.Series(torch.cat(values).cpu().numpy(), index=names)
+
         self.prepare()
 
         params = self.init()
-        self.params_hist_ = [params]
+        self.params_hist_ = [to_series(params)]
         with logging_redirect_tqdm(loggers=[logger_embp]):
             for iter_i in tqdm(
                 range(1, self._max_iter + 1),
@@ -230,13 +262,19 @@ class EMTorch:
 
                 self.e_step(params)
                 params_new = self.m_step(params)
-                diff = np.max(np.abs(params - params_new))
+
+                params_old_ser = to_series(params)
+                params_new_ser = to_series(params_new)
+                rdiff = (
+                    (params_old_ser - params_new_ser).abs()
+                    / (params_old_ser.abs() + self._delta1)
+                ).max()
                 logger_embp.info(
-                    f"EM iteration {iter_i}: difference is {diff: .4f}"
+                    f"EM iteration {iter_i}: difference is {rdiff: .4f}"
                 )
                 params = params_new  # 更新
-                self.params_hist_.append(params)
-                if diff < self._thre:
+                self.params_hist_.append(params_new_ser)
+                if rdiff < self._delta2:
                     self.iter_convergence_ = iter_i
                     break
             else:
@@ -245,13 +283,14 @@ class EMTorch:
                     "doesn't converge"
                 )
 
-        self.params_ = params
+        self.params_ = params_new_ser
         self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
 
     def v_joint(self, params: pd.Series) -> ndarray:
         raise NotImplementedError
 
     def estimate_variance(self) -> ndarray:
+        raise NotImplementedError
         n_params = self.params_.shape[0]
 
         ind_sigma2 = np.nonzero(
@@ -329,17 +368,18 @@ class BinaryEMTorch(EMTorch):
         Y: ndarray,
         Z: ndarray | None = None,
         max_iter: int = 100,
-        thre: float = 0.00001,
         max_iter_inner: int = 100,
-        thre_inner: float = 1e-7,
-        thre_var_est: float = 1e-3,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta1_var: float = 1e-2,
+        delta2: float = 1e-4,
+        delta2_inner: float = 1e-6,
+        delta2_var: float = 1e-2,
         pbar: bool = True,
         lr: float = 1.0,
-        nsample_IS: int = 1000,
-        ema: float = 0.5,  # 指数滑动平均的权重，1表示只用当前值
+        n_importance_sampling: int = 1000,
         device: str = "cuda:0",
     ) -> None:
-        assert ema >= 0 and ema <= 1
         super().__init__(
             X=X,
             S=S,
@@ -347,16 +387,18 @@ class BinaryEMTorch(EMTorch):
             Y=Y,
             Z=Z,
             max_iter=max_iter,
-            thre=thre,
             max_iter_inner=max_iter_inner,
-            thre_inner=thre_inner,
-            thre_var_est=thre_var_est,
+            delta1=delta1,
+            delta1_inner=delta1_inner,
+            delta1_var=delta1_var,
+            delta2=delta2,
+            delta2_inner=delta2_inner,
+            delta2_var=delta2_var,
             pbar=pbar,
             device=device,
         )
         self._lr = lr
-        self._nIS = nsample_IS
-        self._ema = ema
+        self._nIS = n_importance_sampling
 
     def prepare(self):
         super().prepare()
@@ -387,9 +429,10 @@ class BinaryEMTorch(EMTorch):
         beta = logistic(
             Xo_des,
             self._Yo,
-            max_iter=self._max_iter_inner,
-            thre=self._max_iter_inner,
             lr=self._lr,
+            max_iter=self._max_iter_inner,
+            delta1=self._delta1_inner,
+            delta2=self._delta2_inner,
         )
 
         params_update = {
@@ -417,6 +460,7 @@ class BinaryEMTorch(EMTorch):
         sigma2_w_m_long = sigma2_w[self._ind_m_inv]
 
         # 使用newton-raphson方法得到Laplacian approximation
+        Xm = 0  # np.random.randn(Wm.shape[0])
         b_m_long_2 = b_m_long**2
         beta_x_2 = beta_x**2
         grad_const = (
@@ -429,7 +473,6 @@ class BinaryEMTorch(EMTorch):
         Z_part_m = 0.0 if self._Z is None else self._Zm @ beta_z
         delta_part = beta_0_m_long + Z_part_m
 
-        Xm = 0  # np.random.randn(Wm.shape[0])
         for i in range(1, self._max_iter_inner + 1):
             p = torch.sigmoid(Xm * beta_x + delta_part)
             grad = beta_x * p + grad_mul * Xm + grad_const
@@ -438,11 +481,11 @@ class BinaryEMTorch(EMTorch):
             xdelta = self._lr * grad / hessian
             Xm -= xdelta
 
-            diff = xdelta.abs().max()
+            rdiff = (xdelta.abs() / (Xm.abs() + self._delta1_inner)).max()
             logger_embp.info(
-                f"E step Newton-Raphson: iter={i} diff={diff:.4f}"
+                f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
             )
-            if diff < self._thre_inner:
+            if rdiff < self._delta2_inner:
                 break
         else:
             logger_embp.warning(
@@ -528,7 +571,8 @@ class BinaryEMTorch(EMTorch):
             wIS=self._WIS,
             lr=self._lr,
             max_iter=self._max_iter_inner,
-            thre=self._thre_inner,
+            delta1=self._delta1_inner,
+            delta2=self._delta2_inner,
         )
         beta_x, beta_0 = beta_[0], beta_[1 : (self._ns + 1)]
         beta_z = beta_[(self._ns + 1) :] if self._Z is not None else None
@@ -546,67 +590,67 @@ class BinaryEMTorch(EMTorch):
             params["beta_z"] = beta_z
         return params
 
-    def run(self):  # 要使用滑动平均技术
+    # def run(self):  # 要使用滑动平均技术
 
-        def to_series(params: dict[str, Tensor]):
-            names, values = [], []
-            for k in [
-                "mu_x",
-                "sigma2_x",
-                "a",
-                "b",
-                "sigma2_w",
-                "beta_x",
-                "beta_0",
-                "beta_z",
-            ]:
-                if k not in params:
-                    continue
-                tensor = params[k]
-                if tensor.ndim == 0:
-                    names.append(k)
-                    tensor = tensor.unsqueeze(0)
-                else:
-                    names.extend([k] * tensor.shape[0])
-                values.append(tensor)
-            return pd.Series(torch.cat(values).cpu().numpy(), index=names)
+    #     def to_series(params: dict[str, Tensor]):
+    #         names, values = [], []
+    #         for k in [
+    #             "mu_x",
+    #             "sigma2_x",
+    #             "a",
+    #             "b",
+    #             "sigma2_w",
+    #             "beta_x",
+    #             "beta_0",
+    #             "beta_z",
+    #         ]:
+    #             if k not in params:
+    #                 continue
+    #             tensor = params[k]
+    #             if tensor.ndim == 0:
+    #                 names.append(k)
+    #                 tensor = tensor.unsqueeze(0)
+    #             else:
+    #                 names.extend([k] * tensor.shape[0])
+    #             values.append(tensor)
+    #         return pd.Series(torch.cat(values).cpu().numpy(), index=names)
 
-        self.prepare()
+    #     self.prepare()
 
-        params = self.init()
-        params_ema = params_series = to_series(params)
-        self.params_hist_ori_ = [params_series]
-        self.params_hist_ = [params_ema]
-        with logging_redirect_tqdm(loggers=[logger_embp]):
-            for iter_i in tqdm(
-                range(1, self._max_iter + 1),
-                desc="EM: ",
-                disable=not self._pbar,
-            ):
+    #     params = self.init()
+    #     params_ema = params_series = to_series(params)
+    #     self.params_hist_ori_ = [params_series]
+    #     self.params_hist_ = [params_ema]
+    #     with logging_redirect_tqdm(loggers=[logger_embp]):
+    #         for iter_i in tqdm(
+    #             range(1, self._max_iter + 1),
+    #             desc="EM: ",
+    #             disable=not self._pbar,
+    #         ):
 
-                self.e_step(params)
-                params = self.m_step(params)
+    #             self.e_step(params)
+    #             params = self.m_step(params)
 
-                params_series = to_series(params)
-                self.params_hist_ori_.append(params_series)
-                params_ema = (
-                    self._ema * params_series + (1 - self._ema) * params_ema
-                )
-                self.params_hist_.append(params_ema)
+    #             params_series = to_series(params)
+    #             self.params_hist_ori_.append(params_series)
+    #             params_ema = (
+    #                 self._ema * params_series + (1 - self._ema) * params_ema
+    #             )
+    #             self.params_hist_.append(params_ema)
 
-                diff = np.max(np.abs(params_ema - self.params_hist_[-2]))
-                logger_embp.info(
-                    f"EM iteration {iter_i}: difference is {diff: .4f}"
-                )
-                if diff < self._thre:
-                    self.iter_convergence_ = iter_i
-                    break
-            else:
-                logger_embp.warning(
-                    f"EM iteration (max_iter={self._max_iter}) "
-                    "doesn't converge"
-                )
+    #             diff = np.max(np.abs(params_ema - self.params_hist_[-2]))
+    #             logger_embp.info(
+    #                 f"EM iteration {iter_i}: difference is {diff: .4f}"
+    #             )
+    #             if diff < self._thre:
+    #                 self.iter_convergence_ = iter_i
+    #                 break
+    #         else:
+    #             logger_embp.warning(
+    #                 f"EM iteration (max_iter={self._max_iter}) "
+    #                 "doesn't converge"
+    #             )
 
-        self.params_ = params_ema
-        self.params_hist_ori_ = pd.concat(self.params_hist_ori_, axis=1).T
-        self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
+    #     self.params_ = params_ema
+    #     self.params_hist_ori_ = pd.concat(self.params_hist_ori_, axis=1).T
+    #     self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
