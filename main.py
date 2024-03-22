@@ -136,7 +136,7 @@ def trial_continue(ci=False):
 
     simulator = Simulator(
         type_outcome="continue",
-        beta_x=0.,
+        beta_x=1.,
         sigma2_y=[0.5, 1.0, 1.25, 1.5],
         beta_0=[0.5, 0.75, 1.25, 1.5],
     )
@@ -149,6 +149,7 @@ def trial_continue(ci=False):
             outcome_type="continue",
             variance_estimate=ci,
             pbar=False,
+            max_iter=1000
         )
         model.fit(
             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
@@ -173,15 +174,10 @@ def trial_continue(ci=False):
     print(
         f"EMBP: {res_em.mean(): .6f}"
         f", Bias is {np.abs(res_em.mean() - true_beta_x):.6f}"
-        f", MSE is {np.mean((res_em - true_beta_x) ** 2):.6f}, "
+        f", MSE is {np.mean((res_em - true_beta_x) ** 2):.6f}",
+        end=None
     )
     print(f", Cov Rate is {cov_rate: .6f}" if ci else "")
-    # simulator = Simulator(type_outcome="binary", n_knowX_per_studies=10)
-    # df = simulator.simulate()
-    # print(df)
-    # model = EMBP(outcome_type="binary")
-    # model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
-    # print(simulator.parameters["beta_x"], model.params_["beta_x"])
 
 
 def trial_binary():

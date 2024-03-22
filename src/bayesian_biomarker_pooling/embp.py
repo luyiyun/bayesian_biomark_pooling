@@ -274,19 +274,19 @@ class EM:
                 for j in rind_uncovg:
                     inpt = self.params_.copy()
                     x = inpt.iloc[j] = params_t.iloc[j]
+                    if j in ind_sigma2:
+                        x = np.log(x)
+                    # 计算差值比来作为导数的估计
+                    dx = x - params_w_log.iloc[j]
+                    if dx == 0:  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
+                        continue
 
                     self.e_step(inpt)
                     oupt = self.m_step(inpt)
-
                     # 修改sigma2为log尺度
                     oupt.iloc[ind_sigma2] = np.log(oupt.iloc[ind_sigma2])
-                    if j in ind_sigma2:
-                        x = np.log(x)
 
-                    # 计算差值比来作为导数的估计
-                    Rt[j, :] = (oupt.values - params_w_log.values) / (
-                        x - params_w_log.iloc[j]
-                    )
+                    Rt[j, :] = (oupt.values - params_w_log.values) / dx
 
                 # 看一下有哪些行完成了收敛
                 if t > 0:
@@ -309,13 +309,19 @@ class EM:
                 logger_embp.warn("estimate variance does not converge.")
 
         self._R = np.stack(R, axis=0)
-        DM = self._R[-1]
+        DM = R[-1]
 
         v_joint = self.v_joint(self.params_)
         self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
             np.diag(np.ones(n_params)) - DM
         )
-        return np.diag(self.params_cov_)
+        # TODO: 会出现一些方差<0，可能源于
+        params_var = np.diag(self.params_cov_)
+        # if np.any(params_var < 0.0):
+        #     print(self.params_.index.values[params_var < 0.0])
+        #     dv = params_var - np.diag(v_joint)
+        #     import ipdb; ipdb.set_trace()
+        return params_var
 
 
 class ContinueEM(EM):
@@ -668,7 +674,7 @@ class ContinueEM(EM):
         sigma2_y_long = sigma2_y[self._ind_inv]
         temp_mul = self._n_s / sigma2_y
         if self._Z is not None:
-            B = (self._n * xzbar)[None, :]
+            B = np.sum(self._n_s[None, :] * xzbar_s, axis=0, keepdims=True)
             E = temp_mul[None, :] * self._zbar_s
             G = (self._Z.T * sigma2_y_long) @ self._Z
             H = temp_mul * (
@@ -710,7 +716,7 @@ class ContinueEM(EM):
                 self._yybar_s
                 + beta_0**2
                 + beta_x**2 * vbar_s
-                - 2 * beta_0 * xbar_s
+                - 2 * beta_0 * self._ybar_s
                 - 2 * beta_x * xybar_s
                 + 2 * beta_0 * beta_x * xbar_s
                 + J_zpart
@@ -1006,10 +1012,10 @@ class EMBP(BiomarkerPoolBase):
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
         delta1_inner: float = 1e-4,
-        delta2: float = 1e-5,
+        delta2: float = 1e-7,
         delta2_inner: float = 1e-7,
-        delta1_var: float = 1e-2,
-        delta2_var: float = 1e-1,
+        delta1_var: float = 1e-1,
+        delta2_var: float = 1e-3,
         n_importance_sampling: int = 1000,
         lr: float = 1.0,
         variance_estimate: bool = False,
