@@ -79,7 +79,6 @@ def newton_raphson_beta(
         if (torch.diag(H) < epsilon).any():
             # 这里解决的办法是将算法替换为梯度下降法
             beta_delta = lr * grad
-            tqdm.write(str(torch.diag(H)))
         else:
             beta_delta = lr * torch.inverse(H) @ grad
         beta_ -= beta_delta
