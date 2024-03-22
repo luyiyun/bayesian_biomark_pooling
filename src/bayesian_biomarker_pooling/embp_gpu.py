@@ -277,11 +277,11 @@ class EMTorch:
                 if rdiff < self._delta2:
                     self.iter_convergence_ = iter_i
                     break
-            else:
-                logger_embp.warning(
-                    f"EM iteration (max_iter={self._max_iter}) "
-                    "doesn't converge"
-                )
+            # else:
+            #     logger_embp.warning(
+            #         f"EM iteration (max_iter={self._max_iter}) "
+            #         "doesn't converge"
+            #     )
 
         self.params_ = params_new_ser
         self.params_hist_ = pd.concat(self.params_hist_, axis=1).T

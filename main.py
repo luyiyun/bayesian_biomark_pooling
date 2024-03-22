@@ -10,9 +10,7 @@ from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling.embp import EMBP
 
 
-def plot_params_hist(
-    params_hist: np.ndarray, names: np.ndarray, savefn: str
-):
+def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
     nparams = params_hist.shape[1]
     nr = int(np.sqrt(nparams))
     nc = (nparams + 1) // nr
@@ -88,8 +86,9 @@ def temp_test_binary(ci=False):
     model = EMBP(
         outcome_type="binary",
         variance_estimate=ci,
+        max_iter=300,
         pbar=True,
-        n_importance_sampling=3000,
+        n_importance_sampling=1000,
         use_gpu=True,
     )
     model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
@@ -127,7 +126,7 @@ def trial_continue(ci=False):
 
     simulator = Simulator(
         type_outcome="continue",
-        beta_x=1.,
+        beta_x=1.0,
         sigma2_y=[0.5, 1.0, 1.25, 1.5],
         beta_0=[0.5, 0.75, 1.25, 1.5],
     )
@@ -140,7 +139,7 @@ def trial_continue(ci=False):
             outcome_type="continue",
             variance_estimate=ci,
             pbar=False,
-            max_iter=1000
+            max_iter=1000,
         )
         model.fit(
             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
@@ -166,7 +165,7 @@ def trial_continue(ci=False):
         f"EMBP: {res_em.mean(): .6f}"
         f", Bias is {np.abs(res_em.mean() - true_beta_x):.6f}"
         f", MSE is {np.mean((res_em - true_beta_x) ** 2):.6f}",
-        end=None
+        end=None,
     )
     print(f", Cov Rate is {cov_rate: .6f}" if ci else "")
 
@@ -188,7 +187,12 @@ def trial_binary(ci=False):
     for i in tqdm(range(100)):
         df = simulator.simulate()
         model = EMBP(
-            outcome_type="binary", variance_estimate=False, pbar=False
+            outcome_type="binary",
+            variance_estimate=False,
+            pbar=False,
+            max_iter=300,
+            n_importance_sampling=1000,
+            use_gpu=True
         )
         model.fit(
             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
@@ -224,8 +228,8 @@ def trial_binary(ci=False):
 
 def main():
     # temp_test_continue(ci=True)
-    temp_test_binary(ci=False)
-    # trial_binary()
+    # temp_test_binary(ci=False)
+    trial_binary(ci=False)
     # trial_continue(ci=True)
 
 
