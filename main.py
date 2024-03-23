@@ -7,6 +7,7 @@ import pandas as pd
 import xarray as xr
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import statsmodels.api as sm
 
 from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling.embp import EMBP
@@ -107,6 +108,37 @@ def temp_test_binary(ci=False, seed=0):
     print(params)
 
 
+def method_xonly(df: pd.DataFrame):
+    df_drop = df.dropna()
+    x = df_drop["X"].values
+    y = df_drop["Y"].values
+    x = sm.add_constant(x)
+    model = sm.OLS(y, x)
+    res = model.fit()
+    return xr.DataArray(
+        np.r_[res.params[-1], res.conf_int()[1, :]][None, :],
+        coords={
+            "params": ["beta_x"],
+            "statistic": ["estimate", "CI_1", "CI_2"],
+        },
+    )
+
+
+def method_naive(df: pd.DataFrame):
+    x = df["W"].values
+    y = df["Y"].values
+    x = sm.add_constant(x)
+    model = sm.OLS(y, x)
+    res = model.fit()
+    return xr.DataArray(
+        np.r_[res.params[-1], res.conf_int()[1, :]][None, :],
+        coords={
+            "params": ["beta_x"],
+            "statistic": ["estimate", "CI_1", "CI_2"],
+        },
+    )
+
+
 def trial_continue(
     root: str,
     seed: int = 0,
@@ -134,12 +166,16 @@ def trial_continue(
     )
     params_ser = simulator.parameters_series
 
-    res_array = []
+    res_embp, res_xonly, res_naive = [], [], []
     for trial_i in tqdm(range(repeat)):
         # 1. generate data
         df = simulator.simulate(seed=trial_i + seed)
 
-        # 2. run model
+        # 2. other methods
+        res_xonly.append(method_xonly(df))
+        res_naive.append(method_naive(df))
+
+        # 3. run model
         model = EMBP(
             outcome_type="continue",
             variance_estimate=ci,
@@ -150,15 +186,12 @@ def trial_continue(
         model.fit(
             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
         )
-        res_array.append(model.params_.values)
-
-        # 3. other methods
-
+        res_embp.append(model.params_.values)
 
     # 3. collect results
-    res_array = np.stack(res_array, axis=0)
-    res_array = xr.DataArray(
-        res_array,
+    res_embp = np.stack(res_embp, axis=0)
+    res_embp = xr.DataArray(
+        res_embp,
         dims=("repeat", "params", "statistic"),
         coords={
             "params": params_ser.index.values,
@@ -167,7 +200,9 @@ def trial_continue(
     )
     res = xr.Dataset(
         {
-            "EMBP": res_array,
+            "EMBP": res_embp,
+            "xonly": xr.concat(res_xonly, dim="repeat"),
+            "naive": xr.concat(res_naive, dim="repeat"),
             "true": xr.DataArray(
                 params_ser.values,
                 dims=("params",),
@@ -182,7 +217,7 @@ def trial_continue(
 
     # 4. print simple summary
     summary = {}
-    for method in ["EMBP"]:
+    for method in ["EMBP", "xonly", "naive"]:
         summ_i = {}
         resi = res[method]
         diff = (
