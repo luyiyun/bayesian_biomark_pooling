@@ -1,5 +1,6 @@
 import logging
 from typing import Literal
+from copy import deepcopy
 
 import pandas as pd
 import numpy as np
@@ -245,10 +246,10 @@ class EM:
     def m_step(self, params: pd.Series) -> pd.Series:
         raise NotImplementedError
 
-    def run(self):
+    def run(self, init_params: pd.Series | None = None):
         self.prepare()
 
-        params = self.init()
+        params = self.init() if init_params is None else init_params
         self.params_hist_ = [params]
         with logging_redirect_tqdm(loggers=[logger_embp]):
             for iter_i in tqdm(
@@ -1031,6 +1032,10 @@ def bootstrap_estimator(
     seed: int | None | Generator = None,
     pbar: bool = True,
 ) -> pd.DataFrame:
+    assert hasattr(
+        estimator, "params_"
+    ), "please run regular EM iteration firstly!"
+
     seed = np.random.default_rng(seed)
 
     Svals = np.unique(S)
@@ -1041,6 +1046,7 @@ def bootstrap_estimator(
 
     res = []
     estimator._pbar = False  # 将内部的所有tqdm去掉
+    init_params = estimator.params_.copy()
     for _ in tqdm(range(n_repeat), desc="Bootstrap: ", disable=not pbar):
         ind_bootstrap = []
         for si in Svals:
@@ -1071,7 +1077,8 @@ def bootstrap_estimator(
         )
 
         estimator.register_data(Xi, Si, Wi, Yi, Zi)
-        estimator.run()
+        # 使用EM估计值作为初始值
+        estimator.run(init_params=init_params)
         res.append(estimator.params_)
 
     return pd.concat(res, axis=1).T
@@ -1207,7 +1214,8 @@ class EMBP(BiomarkerPoolBase):
         if self.var_est_method_ == "bootstrap":
             # 使用boostrap方法
             res_bootstrap = bootstrap_estimator(
-                estimator=self._estimator,
+                # 使用复制品，而非原始的estimator
+                estimator=deepcopy(self._estimator),
                 X=X,
                 Y=Y,
                 W=W,

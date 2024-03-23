@@ -3,7 +3,7 @@ import os
 import multiprocessing as mp
 import itertools
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Sequence
 
 import numpy as np
 import pandas as pd
@@ -132,27 +132,41 @@ def method_naive(df: pd.DataFrame) -> np.ndarray:
 
 def trial_once_by_simulator_and_estimator(
     simulator: Simulator,
-    estimator: EMBP,
+    estimator: EMBP | None = None,
     seed: int | None = None,
+    methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
+        "EMBP",
+        "xonly",
+        "naive",
+    ),
 ) -> dict[str, np.ndarray]:
     # 1. generate data
     df = simulator.simulate(seed=seed)
 
     # 2. other methods
-    res_xonly = method_xonly(df)
-    res_naive = method_naive(df)
-
-    # 3. run model
-    estimator.fit(
-        df["X"].values, df["S"].values, df["W"].values, df["Y"].values
-    )
-    res_embp = estimator.params_.values
-
-    return {"EMBP": res_embp, "naive": res_naive, "xonly": res_xonly}
+    res_all = {}
+    for methodi in methods:
+        if methodi == "xonly":
+            res = method_xonly(df)
+        elif methodi == "naive":
+            res = method_naive(df)
+        elif methodi == "EMBP":
+            # 3. run model
+            estimator.fit(
+                df["X"].values, df["S"].values, df["W"].values, df["Y"].values
+            )
+            res = estimator.params_.values
+        res_all[methodi] = res
+    return res_all
 
 
 def trial(
     root: str,
+    methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
+        "EMBP",
+        "xonly",
+        "naive",
+    ),
     seed: int = 0,
     repeat: int = 100,
     beta_x: float = 1.0,
@@ -188,20 +202,26 @@ def trial(
     )
     params_ser = simulator.parameters_series
 
-    embp_model = EMBP(
-        outcome_type=type_outcome,
-        variance_estimate=ci,
-        variance_estimate_method=ci_method,
-        pbar=False,
-        max_iter=max_iter,
-        seed=seed,
-    )
+    if "EMBP" in methods:
+        embp_model = EMBP(
+            outcome_type=type_outcome,
+            variance_estimate=ci,
+            variance_estimate_method=ci_method,
+            pbar=False,
+            max_iter=max_iter,
+            seed=seed,
+        )
+    else:
+        embp_model = None
 
     res_arrs = {}
     if n_cores <= 1:
         for trial_i in tqdm(range(repeat)):
             resi = trial_once_by_simulator_and_estimator(
-                simulator=simulator, estimator=embp_model, seed=trial_i + seed
+                simulator=simulator,
+                estimator=embp_model,
+                seed=trial_i + seed,
+                methods=methods,
             )
             for k, arr in resi.items():
                 res_arrs.setdefault(k, []).append(arr)
@@ -210,11 +230,7 @@ def trial(
             tmp_reses = [
                 pool.apply_async(
                     trial_once_by_simulator_and_estimator,
-                    (
-                        simulator,
-                        embp_model,
-                        trial_i + seed,
-                    ),
+                    (simulator, embp_model, trial_i + seed, methods),
                 )
                 for trial_i in range(repeat)
             ]
@@ -369,18 +385,21 @@ def main():
     # temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=True)
     # trial_binary(ci=False)
-    for i, (ns, rx, betax) in enumerate(itertools.product(
-        [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
-    )):
+    for i, (ns, rx, betax) in enumerate(
+        itertools.product(
+            [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
+        )
+    ):
         print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
         n_know_x_per_studies = int(ns * rx)
         trial(
             root="./results/embp",
+            methods=["EMBP"],
             type_outcome="continue",
             repeat=1000,
             ci=True,
-            ci_method="sem",
-            n_cores=1,
+            ci_method="bootstrap",
+            n_cores=20,
             beta_x=betax,
             n_sample_per_studies=ns,
             n_knowX_per_studies=n_know_x_per_studies,
