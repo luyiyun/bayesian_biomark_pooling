@@ -1,6 +1,7 @@
 import logging
 import os
 import multiprocessing as mp
+import itertools
 from datetime import datetime
 from typing import Literal
 
@@ -302,7 +303,7 @@ def trial(
     os.makedirs(root, exist_ok=True)
     res.to_netcdf(
         os.path.join(
-            root, f"{type_outcome}-{datetime.now(): %Y-%m-%d_%H-%M-%S}.nc"
+            root, f"{type_outcome}-{datetime.now():%Y-%m-%d_%H-%M-%S}.nc"
         )
     )
 
@@ -368,26 +369,23 @@ def main():
     # temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=True)
     # trial_binary(ci=False)
-    for n_sample_per_studies in [50, 100, 150, 200]:
-        for know_x_ratio in [0.1, 0.15, 0.2]:
-            print(
-                f"nSamplePerStudy={n_sample_per_studies},"
-                f" RatioXKnow={know_x_ratio}"
-            )
-            n_know_x_per_studies = int(n_sample_per_studies * know_x_ratio)
-            if n_sample_per_studies == 100 and n_know_x_per_studies == 10:
-                continue
-            trial(
-                root="./results/embp",
-                type_outcome="continue",
-                repeat=1000,
-                ci=True,
-                ci_method="sem",
-                n_cores=1,
-                beta_x=1.0,
-                n_sample_per_studies=n_sample_per_studies,
-                n_knowX_per_studies=n_know_x_per_studies,
-            )
+    for i, (ns, rx, betax) in enumerate(itertools.product(
+        [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
+    )):
+        print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
+        n_know_x_per_studies = int(ns * rx)
+        trial(
+            root="./results/embp",
+            type_outcome="continue",
+            repeat=1000,
+            ci=True,
+            ci_method="sem",
+            n_cores=1,
+            beta_x=betax,
+            n_sample_per_studies=ns,
+            n_knowX_per_studies=n_know_x_per_studies,
+            seed=i,
+        )
 
 
 if __name__ == "__main__":
