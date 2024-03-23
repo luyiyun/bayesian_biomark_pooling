@@ -1096,6 +1096,14 @@ class EMBP(BiomarkerPoolBase):
         if use_gpu and seed is not None:
             torch.random.manual_seed(seed)
 
+    @property
+    def result_columns(self):
+        if not self.var_est_:
+            return ["estimate"]
+        if self.var_est_method_ == "bootstrap":
+            return ["estimate", "CI_1", "CI_2"]
+        return ["estimate", "variance(log)", "std(log)", "CI_1", "CI_2"]
+
     def fit(
         self,
         X: ndarray,
