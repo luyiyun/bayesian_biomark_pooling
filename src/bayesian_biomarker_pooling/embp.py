@@ -526,10 +526,15 @@ class ContinueEM(EM):
                 xzd = xzbar_s @ beta_z
             else:
                 xzd = yzd = dzzd = zd = xzd = 0.0
+
+            # 为了避免zero variance的问题，需要使用一些通分技巧
+            sigma2_y_prod = np.array(
+                [np.prod(np.delete(sigma2_y, i)) for i in range(self._ns)]
+            )
             # beta_x
             beta_x_new = (
-                self._n_s / sigma2_y * (xybar_s - beta_0 * xbar_s - xzd)
-            ).sum() / (self._n_s * vbar_s / sigma2_y).sum()
+                self._n_s * (xybar_s - beta_0 * xbar_s - xzd) * sigma2_y_prod
+            ).sum() / (self._n_s * vbar_s * sigma2_y_prod).sum()
             # beta_0
             beta_0_new = self._ybar_s - zd - beta_x_new * xbar_s
             # sigma2_y
@@ -550,13 +555,13 @@ class ContinueEM(EM):
                 beta_z_new = np.linalg.inv(
                     np.sum(
                         self._n_s[:, None, None]
-                        * sigma2_y[:, None, None]
+                        * sigma2_y_new[:, None, None]
                         * self._zzbar_s,
                         axis=0,
                     )
                 ) @ (
                     self._n_s
-                    / sigma2_y
+                    / sigma2_y_new
                     * (
                         self._yzbar_s
                         - beta_0_new[:, None] * self._zbar_s
