@@ -368,13 +368,26 @@ def main():
     # temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=True)
     # trial_binary(ci=False)
-    trial(
-        root="./results/embp",
-        repeat=1000,
-        ci=True,
-        ci_method="bootstrap",
-        n_cores=20
-    )
+    for n_sample_per_studies in [50, 100, 150, 200]:
+        for know_x_ratio in [0.1, 0.15, 0.2]:
+            print(
+                f"nSamplePerStudy={n_sample_per_studies},"
+                f" RatioXKnow={know_x_ratio}"
+            )
+            n_know_x_per_studies = int(n_sample_per_studies * know_x_ratio)
+            if n_sample_per_studies == 100 and n_know_x_per_studies == 10:
+                continue
+            trial(
+                root="./results/embp",
+                type_outcome="continue",
+                repeat=1000,
+                ci=True,
+                ci_method="sem",
+                n_cores=1,
+                beta_x=1.0,
+                n_sample_per_studies=n_sample_per_studies,
+                n_knowX_per_studies=n_know_x_per_studies,
+            )
 
 
 if __name__ == "__main__":

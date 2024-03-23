@@ -17,6 +17,9 @@ from .base import BiomarkerPoolBase
 from .logger import logger_embp
 
 
+EPS = 1e-7
+
+
 def ols(x_des, y) -> np.ndarray:
     return np.linalg.inv(x_des.T @ x_des) @ x_des.T @ y
 
@@ -107,8 +110,12 @@ class EM:
         delta2_inner: float = 1e-6,
         delta1_var: float = 1e-2,
         delta2_var: float = 1e-2,
+        init_method: Literal["rand", "reference"] = "reference",
         pbar: bool = True,
+        random_seed: int | None | Generator = None,
     ) -> None:
+        assert init_method in ["rand", "reference"]
+
         self._max_iter = max_iter
         self._max_iter_inner = max_iter_inner
         self._delta1 = delta1
@@ -117,7 +124,10 @@ class EM:
         self._delta2_inner = delta2_inner
         self._delta1_var = delta1_var
         self._delta2_var = delta2_var
+        self._init_method = init_method
         self._pbar = pbar
+        # 如果是Generator，则default_rng会直接返回它自身
+        self._seed = np.random.default_rng(random_seed)
 
     def register_data(
         self,
@@ -142,6 +152,7 @@ class EM:
         self._ns = len(self._studies)
         self._n_o = self._is_o.sum()
         self._n_m = self._is_m.sum()
+        self._nz = 0 if self._Z is None else self._Z.shpae[1]
 
         self._Xo = self._X[self._is_o]
         self._Yo = self._Y[self._is_o]
@@ -183,32 +194,44 @@ class EM:
         Returns:
             dict: 参数组成的dict
         """
-        mu_x = self._Xo.mean()
-        sigma2_x = np.var(self._Xo, ddof=1)
+        if self._init_method == "reference":
+            mu_x = self._Xo.mean()
+            sigma2_x = np.var(self._Xo, ddof=1)
 
-        a, b, sigma2_w = [], [], []
-        for ind_so_i in self._ind_So:
-            if len(ind_so_i) == 0:
-                a.append(0)
-                b.append(0)
-                sigma2_w.append(1)
-                continue
+            a, b, sigma2_w = [], [], []
+            for ind_so_i in self._ind_So:
+                if len(ind_so_i) == 0:
+                    a.append(0)
+                    b.append(0)
+                    sigma2_w.append(1)
+                    continue
 
-            Xi, Wi = self._X[ind_so_i], self._W[ind_so_i]
-            Xi_des = np.stack([np.ones(Xi.shape[0]), Xi], axis=1)
-            abi = ols(Xi_des, Wi)
-            sigma2_ws_i = np.mean((Wi - Xi_des @ abi) ** 2)
-            a.append(abi[0])
-            b.append(abi[1])
-            sigma2_w.append(sigma2_ws_i)
+                Xi, Wi = self._X[ind_so_i], self._W[ind_so_i]
+                Xi_des = np.stack([np.ones(Xi.shape[0]), Xi], axis=1)
+                abi = ols(Xi_des, Wi)
+                sigma2_ws_i = np.mean((Wi - Xi_des @ abi) ** 2)
+                a.append(abi[0])
+                b.append(abi[1])
+                sigma2_w.append(sigma2_ws_i)
 
-        return pd.Series(
-            [mu_x, sigma2_x] + a + b + sigma2_w,
-            index=["mu_x", "sigma2_x"]
-            + ["a"] * self._ns
-            + ["b"] * self._ns
-            + ["sigma2_w"] * self._ns,
-        )
+            return pd.Series(
+                [mu_x, sigma2_x] + a + b + sigma2_w,
+                index=["mu_x", "sigma2_x"]
+                + ["a"] * self._ns
+                + ["b"] * self._ns
+                + ["sigma2_w"] * self._ns,
+            )
+        else:
+            arr = self._seed.normal(size=self._ns * 3 + 2)
+            arr[1] = np.exp(arr[1])
+            arr[-self._ns :] = np.exp(arr[-self._ns :])
+            return pd.Series(
+                arr,
+                index=["mu_x", "sigma2_x"]
+                + ["a"] * self._ns
+                + ["b"] * self._ns
+                + ["sigma2_w"] * self._ns,
+            )
 
     def e_step(self, params: pd.Series):
         """Expectation step
@@ -364,28 +387,45 @@ class ContinueEM(EM):
     def init(self) -> pd.Series:
         params = super().init()
 
-        Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
-        if self._Z is not None:
-            Xo_des.append(self._Zo)
-        Xo_des = np.concatenate(Xo_des, axis=1)
-        beta = ols(Xo_des, self._Yo)
-        sigma2_ys = np.mean((self._Yo - Xo_des @ beta) ** 2)
+        if self._init_method == "reference":
+            Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
+            if self._Z is not None:
+                Xo_des.append(self._Zo)
+            Xo_des = np.concatenate(Xo_des, axis=1)
+            beta = ols(Xo_des, self._Yo)
+            sigma2_ys = np.mean((self._Yo - Xo_des @ beta) ** 2)
 
-        return pd.concat(
-            [
-                params,
-                pd.Series(
-                    [beta[1]]
-                    + [beta[0]] * self._ns
-                    + beta[2:].tolist()
-                    + [sigma2_ys] * self._ns,
-                    index=["beta_x"]
-                    + ["beta_0"] * self._ns
-                    + ["beta_z"] * (len(beta) - 2)
-                    + ["sigma2_y"] * self._ns,
-                ),
-            ]
-        )
+            return pd.concat(
+                [
+                    params,
+                    pd.Series(
+                        [beta[1]]
+                        + [beta[0]] * self._ns
+                        + beta[2:].tolist()
+                        + [sigma2_ys] * self._ns,
+                        index=["beta_x"]
+                        + ["beta_0"] * self._ns
+                        + ["beta_z"] * self._nz
+                        + ["sigma2_y"] * self._ns,
+                    ),
+                ]
+            )
+        else:
+            beta = self._seed.normal(size=self._ns * 2 + self._nz + 1)
+            beta[1 : (1 + self._ns)] = np.exp(beta[1 : (1 + self._ns)])
+            beta[-self._ns :] = np.exp(beta[-self._ns :])
+            return pd.concat(
+                [
+                    params,
+                    pd.Series(
+                        beta,
+                        index=["beta_x"]
+                        + ["beta_0"] * self._ns
+                        + ["beta_z"] * self._nz
+                        + ["sigma2_y"] * self._ns,
+                    ),
+                ]
+            )
 
     def e_step(self, params: pd.Series):
         mu_x = params["mu_x"]
@@ -398,6 +438,8 @@ class ContinueEM(EM):
         beta_0 = params["beta_0"].values
         sigma2_y = params["sigma2_y"].values
 
+        # if np.any(sigma2_y == 0) or np.any(sigma2_w ==0) or (sigma2_x ==0):
+        #     import ipdb; ipdb.set_trace()
         self._sigma2 = 1 / (
             beta_x**2 / sigma2_y + b**2 / sigma2_w + 1 / sigma2_x
         )  # 最后在迭代计算sigma2_y的时候还会用到
@@ -774,9 +816,8 @@ class BinaryEM(EM):
             delta2_inner=delta2_inner,
             delta2_var=delta2_var,
             pbar=pbar,
+            random_seed=seed,
         )
-        # 如果是Generator，则default_rng会直接返回它自身
-        self._seed = np.random.default_rng(seed)
         self._lr = lr
         self._nIS = n_importance_sampling
 
@@ -1153,7 +1194,7 @@ class EMBP(BiomarkerPoolBase):
                     pbar=self.pbar_,
                     lr=self.lr_,
                     n_importance_sampling=self.nIS_,
-                    seed=self.seed_
+                    seed=self.seed_,
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
