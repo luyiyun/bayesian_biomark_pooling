@@ -18,7 +18,7 @@ from .base import BiomarkerPoolBase
 from .logger import logger_embp
 
 
-EPS = 1e-7
+EPS = 1e-5
 
 
 def ols(x_des, y) -> np.ndarray:
@@ -181,6 +181,14 @@ class EM:
         self._wbar_s = np.array([np.mean(self._W[ind]) for ind in self._ind_S])
         self._wwbar_s = np.array(
             [np.mean(self._W[ind] ** 2) for ind in self._ind_S]
+        )
+
+        self._sigma_ind = np.array(
+            [1]
+            + list(range(2 + 2 * self._ns, 2 + 2 * (self._ns + 1)))
+            + list(
+                range(3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz)
+            )
         )
 
         self._Xhat = np.copy(self._X)
@@ -438,25 +446,30 @@ class ContinueEM(EM):
         beta_z = params["beta_z"].values if self._Z is not None else 0.0
         beta_0 = params["beta_0"].values
         sigma2_y = params["sigma2_y"].values
+        sigma2_denominator = (
+            sigma2_w * sigma2_x * beta_x**2
+            + sigma2_y * sigma2_x * b**2
+            + sigma2_y * sigma2_w
+        )
+        sigma2 = sigma2_w * sigma2_x * sigma2_y / sigma2_denominator
 
-        # if np.any(sigma2_y == 0) or np.any(sigma2_w ==0) or (sigma2_x ==0):
-        #     import ipdb; ipdb.set_trace()
-        self._sigma2 = 1 / (
-            beta_x**2 / sigma2_y + b**2 / sigma2_w + 1 / sigma2_x
-        )  # 最后在迭代计算sigma2_y的时候还会用到
         z_m_part = 0.0 if self._Z is None else self._Zm @ beta_z
         beta_0_m_long = beta_0[self._ind_m_inv]
         sigma2_y_m_long = sigma2_y[self._ind_m_inv]
         a_m_long = a[self._ind_m_inv]
         b_m_long = b[self._ind_m_inv]
         sigma2_w_m_long = sigma2_w[self._ind_m_inv]
-        sigma2_m_long = self._sigma2[self._ind_m_inv]
+        sigma2_denominator_m_long = sigma2_denominator[self._ind_m_inv]
+        sigma2_m_long = sigma2[self._ind_m_inv]
 
         xhat_m = (
-            (self._Ym - beta_0_m_long - z_m_part) * beta_x / sigma2_y_m_long
-            + (self._Wm - a_m_long) * b_m_long / sigma2_w_m_long
-            + mu_x / sigma2_x
-        ) * sigma2_m_long
+            (self._Ym - beta_0_m_long - z_m_part)
+            * beta_x
+            * sigma2_w_m_long
+            * sigma2_x
+            + (self._Wm - a_m_long) * b_m_long * sigma2_y_m_long * sigma2_x
+            + mu_x * sigma2_w_m_long * sigma2_y_m_long
+        ) / sigma2_denominator_m_long
 
         self._Xhat[self._is_m] = xhat_m
         self._Xhat2[self._is_m] = xhat_m**2 + sigma2_m_long

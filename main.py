@@ -399,7 +399,7 @@ def main():
             repeat=1000,
             ci=True,
             ci_method="bootstrap",
-            n_cores=20,
+            n_cores=30,
             beta_x=betax,
             n_sample_per_studies=ns,
             n_knowX_per_studies=n_know_x_per_studies,
