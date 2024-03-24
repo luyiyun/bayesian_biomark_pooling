@@ -21,8 +21,193 @@ from .logger import logger_embp
 EPS = 1e-5
 
 
-def ols(x_des, y) -> np.ndarray:
-    return np.linalg.inv(x_des.T @ x_des) @ x_des.T @ y
+def batch_dot(mats: ndarray, vecs: ndarray):
+    return (mats * vecs[..., None, :]).sum(axis=-1)
+
+
+def batch_mat_sq(mats: ndarray):
+    return mats.swapaxes(-2, -1) @ mats
+
+
+def ols(x_des: ndarray, y: ndarray) -> np.ndarray:
+    hat_mat = np.linalg.inv(batch_mat_sq(x_des)) @ x_des.swapaxes(-2, -1)
+    return batch_dot(hat_mat, y)
+
+
+def iter_update_beta(
+    batch_mode: bool,
+    beta_x: ndarray,
+    beta_0: ndarray,
+    sigma2_y: ndarray,
+    beta_z: ndarray | None,
+    xzbar_s: ndarray,
+    zbar_s: ndarray,
+    zzbar_s: ndarray,
+    yzbar_s: ndarray,
+    xybar_s: ndarray,
+    xbar_s: ndarray,
+    vbar_s: ndarray,
+    ybar_s: ndarray,
+    yybar_s: ndarray,
+    n_s: ndarray,
+    max_iter: int,
+    delta1: float,
+    delta2: float,
+):
+    ns = beta_0.shape[-1]
+    beta_all = np.concatenate(
+        [beta_x, beta_0] + ([] if beta_z is None else [beta_z]) + [sigma2_y],
+        axis=-1,
+    )
+    if batch_mode:
+        beta_all_whole = beta_all.copy()
+        remain_bs_ind = np.arange(beta_x.shape[0])
+    for i in range(max_iter):
+        # 如果batch mode，则会监控一个remain_ind，每次只更新其中的内容，
+        # 如果remain_ind数量变成0，则停止更新
+        if batch_mode:
+            beta_all = beta_all[remain_bs_ind]
+            beta_x = beta_x[remain_bs_ind]
+            beta_0 = beta_0[remain_bs_ind]
+            sigma2_y = sigma2_y[remain_bs_ind]
+            xybar_s = xybar_s[remain_bs_ind]
+            xbar_s = xbar_s[remain_bs_ind]
+            vbar_s = vbar_s[remain_bs_ind]
+            ybar_s = ybar_s[remain_bs_ind]
+            yybar_s = yybar_s[remain_bs_ind]
+            if beta_z is not None:
+                beta_z = beta_z[remain_bs_ind]
+            if beta_z is not None:
+                xzbar_s = xzbar_s[remain_bs_ind]
+                zbar_s = zbar_s[remain_bs_ind]
+                zzbar_s = zzbar_s[remain_bs_ind]
+                yzbar_s = yzbar_s[remain_bs_ind]
+
+        # 关于z的一些项
+        if beta_z is not None:
+            xzd = batch_dot(xzbar_s, beta_z)
+            zd = batch_dot(zbar_s, beta_z)
+            if batch_mode:
+                dzzd = np.squeeze(
+                    beta_z[:, None, None, :]
+                    @ zzbar_s
+                    @ beta_z[:, None, :, None]
+                )
+            else:
+                dzzd = np.sum(
+                    beta_z * zzbar_s * beta_z[..., None],
+                    axis=(-2, -1),
+                )
+            yzd = batch_dot(yzbar_s, beta_z)
+            xzd = batch_dot(xzbar_s, beta_z)
+        else:
+            xzd = yzd = dzzd = zd = xzd = 0.0
+
+        # 为了避免zero variance的问题，需要使用一些通分技巧
+        sigma2_y_prod = np.stack(
+            [
+                np.prod(np.delete(sigma2_y, i, axis=-1), axis=-1)
+                for i in range(ns)
+            ]
+        )
+        if batch_mode:
+            sigma2_y_prod = sigma2_y_prod.T
+
+        # beta_x
+        beta_x_new = (
+            n_s * (xybar_s - beta_0 * xbar_s - xzd) * sigma2_y_prod
+        ).sum(axis=-1, keepdims=True) / (n_s * vbar_s * sigma2_y_prod).sum(
+            axis=-1, keepdims=True
+        )
+        # beta_0
+        beta_0_new = ybar_s - zd - beta_x_new * xbar_s
+        # sigma2_y
+        sigma2_y_new = (
+            yybar_s
+            + beta_0_new**2
+            + beta_x_new**2 * vbar_s
+            + dzzd
+            - 2 * beta_0_new * ybar_s
+            - 2 * beta_x_new * xybar_s
+            - 2 * yzd
+            + 2 * beta_0_new * beta_x_new * xbar_s
+            + 2 * beta_0_new * zd
+            + 2 * beta_x_new * xzd
+        )
+        # beta_z
+        if beta_z is not None:
+            # TODO: sigma2_y_new =0 可能会导致问题
+            tmp1 = np.linalg.inv(
+                np.sum(
+                    n_s[..., None, None]  # (nbs,)ns
+                    / sigma2_y_new[..., None, None]  # (nbs,)ns
+                    * zzbar_s,  # (nbs,)ns,nz,nz
+                    axis=-3,
+                )
+            )
+            tmp2 = np.sum(
+                (n_s / sigma2_y_new)[..., None]  # (nbs,)ns
+                * (
+                    yzbar_s  # (nbs,)ns,nz
+                    - beta_0_new[..., None] * zbar_s  # (nbs,)ns,nz
+                    - beta_x_new[..., None] * xzbar_s  # (nbs,)1
+                ),
+                axis=-2,
+            )
+            beta_z_new = batch_dot(tmp1, tmp2)
+
+        # calculate the relative difference
+        beta_all_new = np.concatenate(
+            [beta_x_new, beta_0_new]
+            + ([] if beta_z is None else [beta_z_new])
+            + [sigma2_y_new],
+            axis=-1,
+        )
+        rdiff = np.max(
+            np.abs(beta_all_new - beta_all) / (np.abs(beta_all) + delta1),
+            axis=-1,
+        )
+        if batch_mode:
+            logger_embp.info(
+                f"Inner iteration {i+1}: "
+                f"relative difference avg is {rdiff.mean(): .4f}"
+            )
+        else:
+            logger_embp.info(
+                f"Inner iteration {i+1}: "
+                f"relative difference is {rdiff: .4f}"
+            )
+
+        # update parameters
+        beta_all = beta_all_new
+        # beta_x = beta_x_new
+        beta_0 = beta_0_new
+        sigma2_y = sigma2_y_new
+        if beta_z is not None:
+            beta_z = beta_z_new
+        if batch_mode:
+            beta_all_whole[remain_bs_ind] = beta_all_new
+
+        if not batch_mode and (rdiff < delta2):
+            logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
+            break
+        elif batch_mode:
+            remain_bs_ind = np.nonzero(rdiff >= delta2)[0]
+            if len(remain_bs_ind) == 0:
+                logger_embp.info(f"All inner iteration stop, stop iter: {i+1}")
+                break
+            else:
+                logger_embp.info(
+                    f"All inner iteration remain {len(remain_bs_ind)} "
+                    "rows to converge"
+                )
+
+    else:
+        logger_embp.warn("Inner iteration does not converge")
+
+    if batch_mode:
+        return beta_all_whole
+    return beta_all
 
 
 def logistic(
@@ -138,6 +323,15 @@ class EM:
         Y: ndarray,
         Z: ndarray | None = None,
     ):
+        assert X.shape == S.shape == W.shape == Y.shape
+        if Z is not None:
+            assert X.shape == Z.shape[:-1]
+        assert X.ndim <= 2
+
+        self._batch_mode = X.ndim > 1
+        if self._batch_mode:
+            self._n_batch = X.shape[0]
+
         self._X = X
         self._S = S
         self._W = W
@@ -145,43 +339,104 @@ class EM:
         self._Z = Z
 
     def prepare(self):
+
+        def nonzero_batch(mask):
+            return np.arange(mask.shape[0])[:, None], np.stack(
+                [np.nonzero(mask[i])[0] for i in range(mask.shape[0])],
+            )
+
         # 准备后续步骤中会用到的array，预先计算，节省效率
-        self._n = self._Y.shape[0]
-        self._studies, self._ind_inv = np.unique(self._S, return_inverse=True)
+        # NOTE: 默认batch mode下，也不会出现不一致的情况。
+        if self._batch_mode:
+            st_seq, ind_seq = [], []
+            for i in range(self._S.shape[0]):
+                uniq_i, ind_inv_i = np.unique(self._S[i], return_inverse=True)
+                st_seq.append(uniq_i)
+                ind_seq.append(ind_inv_i)
+            self._studies, self._ind_inv = np.stack(st_seq), np.stack(ind_seq)
+        else:
+            self._studies, self._ind_inv = np.unique(
+                self._S, return_inverse=True
+            )
         self._is_m = pd.isnull(self._X)
         self._is_o = ~self._is_m
-        self._ns = len(self._studies)
-        self._n_o = self._is_o.sum()
-        self._n_m = self._is_m.sum()
-        self._nz = 0 if self._Z is None else self._Z.shpae[1]
+        if self._batch_mode:
+            self._ind_m = nonzero_batch(self._is_m)
+            self._ind_o = nonzero_batch(self._is_o)
+        else:
+            self._ind_m = np.nonzero(self._is_m)[0]
+            self._ind_o = np.nonzero(self._is_o)[0]
 
-        self._Xo = self._X[self._is_o]
-        self._Yo = self._Y[self._is_o]
-        self._Wo = self._W[self._is_o]
-        self._Xm = self._X[self._is_m]
-        self._Ym = self._Y[self._is_m]
-        self._Wm = self._W[self._is_m]
+        self._Xo = self._X[self._ind_o]
+        self._Yo = self._Y[self._ind_o]
+        self._Wo = self._W[self._ind_o]
+        self._Ym = self._Y[self._ind_m]
+        self._Wm = self._W[self._ind_m]
         if self._Z is not None:
-            self._Zo = self._Z[self._is_o, :]
-            self._Zm = self._Z[self._is_m, :]
+            self._Zo = self._Z[self._ind_o]
+            self._Zm = self._Z[self._ind_m]
 
-        self._ind_S = [np.nonzero(self._S == s)[0] for s in self._studies]
-        self._ind_Sm = [
-            np.nonzero((self._S == s) & self._is_m)[0] for s in self._studies
-        ]
-        self._ind_So = [
-            np.nonzero((self._S == s) & self._is_o)[0] for s in self._studies
-        ]
-        self._ind_m_inv = self._ind_inv[self._is_m]
+        if self._batch_mode:
+            self._ind_S = [
+                nonzero_batch(self._S == s[:, None]) for s in self._studies.T
+            ]
+            self._ind_Sm = [
+                nonzero_batch((self._S == s[:, None]) & self._is_m)
+                for s in self._studies.T
+            ]
+            self._ind_So = [
+                nonzero_batch((self._S == s[:, None]) & self._is_o)
+                for s in self._studies.T
+            ]
+            self._ind_m_inv = (
+                np.arange(self._is_m.shape[0])[:, None],
+                np.stack(
+                    [
+                        self._ind_inv[i, self._is_m[i]]
+                        for i in range(self._is_m.shape[0])
+                    ],
+                    axis=0,
+                ),
+            )
+        else:
+            self._ind_S = [np.nonzero(self._S == s)[0] for s in self._studies]
+            self._ind_Sm = [
+                np.nonzero((self._S == s) & self._is_m)[0]
+                for s in self._studies
+            ]
+            self._ind_So = [
+                np.nonzero((self._S == s) & self._is_o)[0]
+                for s in self._studies
+            ]
+            self._ind_m_inv = self._ind_inv[self._is_m]
 
-        self._n_s = np.array([len(indi) for indi in self._ind_S])
-        self._n_ms = np.array([len(indi) for indi in self._ind_Sm])
-        # self._ind_Sm_inv = [self._ind_inv[is_i] for is_i in self._ind_Sm]
-
-        self._wbar_s = np.array([np.mean(self._W[ind]) for ind in self._ind_S])
-        self._wwbar_s = np.array(
-            [np.mean(self._W[ind] ** 2) for ind in self._ind_S]
+        self._n = self._Y.shape[-1]
+        self._ns = self._studies.shape[-1]
+        self._nz = 0 if self._Z is None else self._Z.shape[-1]
+        self._n_o = self._is_o.sum(axis=-1)
+        self._n_m = self._is_m.sum(axis=-1)
+        self._n_s = np.array(
+            [
+                indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
+                for indi in self._ind_S
+            ]
         )
+        self._n_ms = np.array(
+            [
+                indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
+                for indi in self._ind_Sm
+            ]
+        )
+
+        self._wbar_s = np.stack(
+            [np.mean(self._W[ind], axis=-1) for ind in self._ind_S]
+        )
+        self._wwbar_s = np.stack(
+            [np.mean(self._W[ind] ** 2, axis=-1) for ind in self._ind_S]
+        )
+        if self._batch_mode:
+            self._wbar_s = self._wbar_s.T
+            self._wwbar_s = self._wwbar_s.T
 
         self._sigma_ind = np.array(
             [1]
@@ -190,11 +445,18 @@ class EM:
                 range(3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz)
             )
         )
+        self._params_ind = {
+            "mu_x": 0,
+            "sigma2_x": 1,
+            "a": slice(2, 2 + self._ns),
+            "b": slice(2 + self._ns, 2 + 2 * self._ns),
+            "sigma2_w": slice(2 + 2 * self._ns, 2 + 3 * self._ns),
+        }
 
         self._Xhat = np.copy(self._X)
         self._Xhat2 = self._Xhat**2
 
-    def init(self) -> pd.Series:
+    def init(self) -> ndarray:
         """初始化参数
 
         这里仅初始化mu_x,sigma2_x,a,b,sigma2_w，其他和outcome相关的参数需要在子类
@@ -204,33 +466,43 @@ class EM:
             dict: 参数组成的dict
         """
         if self._init_method == "reference":
-            mu_x = self._Xo.mean()
-            sigma2_x = np.var(self._Xo, ddof=1)
+            mu_x = self._Xo.mean(axis=-1, keepdims=True)
+            sigma2_x = np.var(self._Xo, ddof=1, axis=-1, keepdims=True)
 
             a, b, sigma2_w = [], [], []
             for ind_so_i in self._ind_So:
                 if len(ind_so_i) == 0:
-                    a.append(0)
-                    b.append(0)
-                    sigma2_w.append(1)
+                    a.append(
+                        np.zeros(self._n_batch) if self._batch_mode else 0
+                    )
+                    b.append(
+                        np.zeros(self._n_batch) if self._batch_mode else 0
+                    )
+                    sigma2_w.append(
+                        np.ones(self._n_batch) if self._batch_mode else 1
+                    )
                     continue
 
                 Xi, Wi = self._X[ind_so_i], self._W[ind_so_i]
-                Xi_des = np.stack([np.ones(Xi.shape[0]), Xi], axis=1)
+                Xi_des = np.stack([np.ones_like(Xi), Xi], axis=-1)
                 abi = ols(Xi_des, Wi)
-                sigma2_ws_i = np.mean((Wi - Xi_des @ abi) ** 2)
-                a.append(abi[0])
-                b.append(abi[1])
+                sigma2_ws_i = np.mean(
+                    (Wi - batch_dot(Xi_des, abi)) ** 2,
+                    axis=-1,
+                )
+                a.append(abi[..., 0])
+                b.append(abi[..., 1])
                 sigma2_w.append(sigma2_ws_i)
-
-            return pd.Series(
-                [mu_x, sigma2_x] + a + b + sigma2_w,
-                index=["mu_x", "sigma2_x"]
-                + ["a"] * self._ns
-                + ["b"] * self._ns
-                + ["sigma2_w"] * self._ns,
+            a, b, sigma2_w = (
+                np.stack(a, axis=-1),
+                np.stack(b, axis=-1),
+                np.stack(sigma2_w, axis=-1),
             )
+
+            res = np.concatenate([mu_x, sigma2_x, a, b, sigma2_w], axis=-1)
+            return res
         else:
+            raise NotImplementedError
             arr = self._seed.normal(size=self._ns * 3 + 2)
             arr[1] = np.exp(arr[1])
             arr[-self._ns :] = np.exp(arr[-self._ns :])
@@ -242,7 +514,7 @@ class EM:
                 + ["sigma2_w"] * self._ns,
             )
 
-    def e_step(self, params: pd.Series):
+    def e_step(self, params: ndarray):
         """Expectation step
 
         从EM算法的定义上，是计算log joint likelihood的后验期望，也就是Q function。
@@ -251,10 +523,10 @@ class EM:
         """
         raise NotImplementedError
 
-    def m_step(self, params: pd.Series) -> pd.Series:
+    def m_step(self, params: ndarray) -> ndarray:
         raise NotImplementedError
 
-    def run(self, init_params: pd.Series | None = None):
+    def run(self, init_params: ndarray | None = None):
         self.prepare()
 
         params = self.init() if init_params is None else init_params
@@ -268,10 +540,10 @@ class EM:
 
                 self.e_step(params)
                 params_new = self.m_step(params)
-                # diff = np.max(np.abs(params - params_new))
+
                 rdiff = np.max(
                     np.abs(params - params_new)
-                    / (np.abs(params) + self._delta1)
+                    / (np.abs(params) + self._delta1),
                 )
                 logger_embp.info(
                     f"EM iteration {iter_i}: "
@@ -279,7 +551,8 @@ class EM:
                 )
                 params = params_new  # 更新
                 self.params_hist_.append(params)
-                if rdiff < self._delta2:
+
+                if rdiff < self._delta2:  # TODO: 这里有优化的空间
                     self.iter_convergence_ = iter_i
                     break
             else:
@@ -289,7 +562,7 @@ class EM:
                 )
 
         self.params_ = params
-        self.params_hist_ = pd.concat(self.params_hist_, axis=1).T
+        self.params_hist_ = np.stack(self.params_hist_)
 
     def v_joint(self, params: pd.Series) -> ndarray:
         raise NotImplementedError
@@ -373,53 +646,82 @@ class ContinueEM(EM):
     def prepare(self):
         super().prepare()
 
-        self._ybar_s = np.array([self._Y[ind].mean() for ind in self._ind_S])
-        self._yybar_s = np.array(
-            [(self._Y[ind] ** 2).mean() for ind in self._ind_S]
+        self._ybar_s = np.array(
+            [self._Y[ind].mean(axis=-1) for ind in self._ind_S]
         )
+        self._yybar_s = np.array(
+            [(self._Y[ind] ** 2).mean(axis=-1) for ind in self._ind_S]
+        )
+        if self._batch_mode:
+            self._ybar_s = self._ybar_s.T
+            self._yybar_s = self._yybar_s.T
 
         if self._Z is not None:
             self._zzbar_s = []
             self._zbar_s = []
             self._yzbar_s = []
-            for ind in self._ind_S:
-                Zs = self._Z[ind, :]
-                self._zzbar_s.append(Zs.T @ Zs / ind.shape[0])
-                self._zbar_s.append(Zs.mean(axis=0))
-                self._yzbar_s.append((Zs * self._Y[ind]).mean())
+            for ind, n_s in zip(self._ind_S, self._n_s):
+                Zs = self._Z[ind]
+                self._zzbar_s.append(Zs.swapaxes(-1, -2) @ Zs / n_s)
+                self._zbar_s.append(Zs.mean(axis=-2))
+                self._yzbar_s.append(
+                    (Zs * self._Y[ind][..., None]).mean(axis=-2)
+                )
             self._zzbar_s = np.stack(self._zzbar_s, axis=0)
             self._zbar_s = np.stack(self._zbar_s)
             self._yzbar_s = np.stack(self._yzbar_s)
+            if self._batch_mode:
+                self._zzbar_s = self._zzbar_s.swapaxes(0, 1)
+                self._zbar_s = self._zbar_s.swapaxes(0, 1)
+                self._yzbar_s = self._yzbar_s.swapaxes(0, 1)
         else:
             self._zzbar_s = self._zbar_s = self._yzbar_s = 0
 
-    def init(self) -> pd.Series:
+        self._params_ind.update(
+            {
+                "beta_x": 2 + 3 * self._ns,
+                "beta_0": slice(3 + 3 * self._ns, 3 + 4 * self._ns),
+                "beta_z": slice(3 + 4 * self._ns, 3 + 4 * self._ns + self._nz),
+                "sigma2_y": slice(
+                    3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz
+                ),
+            }
+        )
+
+    def init(self) -> ndarray:
         params = super().init()
 
         if self._init_method == "reference":
-            Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
+            Xo_des = [np.ones_like(self._Xo)[..., None], self._Xo[..., None]]
             if self._Z is not None:
                 Xo_des.append(self._Zo)
-            Xo_des = np.concatenate(Xo_des, axis=1)
+            Xo_des = np.concatenate(Xo_des, axis=-1)
             beta = ols(Xo_des, self._Yo)
-            sigma2_ys = np.mean((self._Yo - Xo_des @ beta) ** 2)
-
-            return pd.concat(
-                [
-                    params,
-                    pd.Series(
-                        [beta[1]]
-                        + [beta[0]] * self._ns
-                        + beta[2:].tolist()
-                        + [sigma2_ys] * self._ns,
-                        index=["beta_x"]
-                        + ["beta_0"] * self._ns
-                        + ["beta_z"] * self._nz
-                        + ["sigma2_y"] * self._ns,
-                    ),
-                ]
+            sigma2_ys = np.mean(
+                (self._Yo - batch_dot(Xo_des, beta)) ** 2,
+                axis=-1,
             )
+            if self._batch_mode:
+                res = np.concatenate(
+                    [
+                        params,
+                        beta[:, [1] + [0] * self._ns],
+                        beta[:, 2:],
+                        np.tile(sigma2_ys[:, None], (1, 4)),
+                    ],
+                    axis=1,
+                )
+            else:
+                res = np.r_[
+                    params,
+                    beta[1],
+                    [beta[0]] * self._ns,
+                    beta[2:],
+                    [sigma2_ys] * self._ns,
+                ]
+            return res
         else:
+            raise NotImplementedError
             beta = self._seed.normal(size=self._ns * 2 + self._nz + 1)
             beta[1 : (1 + self._ns)] = np.exp(beta[1 : (1 + self._ns)])
             beta[-self._ns :] = np.exp(beta[-self._ns :])
@@ -436,16 +738,30 @@ class ContinueEM(EM):
                 ]
             )
 
-    def e_step(self, params: pd.Series):
-        mu_x = params["mu_x"]
-        sigma2_x = params["sigma2_x"]
-        a = params["a"].values
-        b = params["b"].values
-        sigma2_w = params["sigma2_w"].values
-        beta_x = params["beta_x"]
-        beta_z = params["beta_z"].values if self._Z is not None else 0.0
-        beta_0 = params["beta_0"].values
-        sigma2_y = params["sigma2_y"].values
+    def e_step(self, params: ndarray):
+        mu_x, sigma2_x, a, b, sigma2_w, beta_x, beta_0, sigma2_y = (
+            params[..., self._params_ind[k]]
+            for k in [
+                "mu_x",
+                "sigma2_x",
+                "a",
+                "b",
+                "sigma2_w",
+                "beta_x",
+                "beta_0",
+                "sigma2_y",
+            ]
+        )
+        beta_z = (
+            params[..., self._params_ind["beta_z"]]
+            if self._Z is not None
+            else 0.0
+        )
+
+        mu_x = np.expand_dims(mu_x, axis=-1)
+        sigma2_x = np.expand_dims(sigma2_x, axis=-1)
+        beta_x = np.expand_dims(beta_x, axis=-1)
+
         sigma2_denominator = (
             sigma2_w * sigma2_x * beta_x**2
             + sigma2_y * sigma2_x * b**2
@@ -453,7 +769,7 @@ class ContinueEM(EM):
         )
         sigma2 = sigma2_w * sigma2_x * sigma2_y / sigma2_denominator
 
-        z_m_part = 0.0 if self._Z is None else self._Zm @ beta_z
+        z_m_part = 0.0 if self._Z is None else batch_dot(self._Zm, beta_z)
         beta_0_m_long = beta_0[self._ind_m_inv]
         sigma2_y_m_long = sigma2_y[self._ind_m_inv]
         a_m_long = a[self._ind_m_inv]
@@ -471,32 +787,51 @@ class ContinueEM(EM):
             + mu_x * sigma2_w_m_long * sigma2_y_m_long
         ) / sigma2_denominator_m_long
 
-        self._Xhat[self._is_m] = xhat_m
-        self._Xhat2[self._is_m] = xhat_m**2 + sigma2_m_long
+        self._Xhat[self._ind_m] = xhat_m
+        self._Xhat2[self._ind_m] = xhat_m**2 + sigma2_m_long
 
-    def m_step(self, params: pd.Series) -> pd.Series:
-        vbar = self._Xhat2.mean()
-        wxbar_s = np.array(
-            [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
+    def m_step(self, params: ndarray) -> ndarray:
+        vbar = self._Xhat2.mean(axis=-1)
+        wxbar_s = np.stack(
+            [
+                np.mean(self._W[ind] * self._Xhat[ind], axis=-1)
+                for ind in self._ind_S
+            ]
         )
-        vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
-        xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
-
+        vbar_s = np.stack(
+            [np.mean(self._Xhat2[ind], axis=-1) for ind in self._ind_S]
+        )
+        xbar_s = np.stack(
+            [np.mean(self._Xhat[ind], axis=-1) for ind in self._ind_S]
+        )
         xybar_s = np.array(
-            [np.mean(self._Xhat[ind] * self._Y[ind]) for ind in self._ind_S]
+            [
+                np.mean(self._Xhat[ind] * self._Y[ind], axis=-1)
+                for ind in self._ind_S
+            ]
         )
+        if self._batch_mode:
+            wxbar_s = wxbar_s.T
+            vbar_s = vbar_s.T
+            xbar_s = xbar_s.T
+            xybar_s = xybar_s.T
+
         if self._Z is not None:
             # xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
             xzbar_s = np.stack(
                 [
-                    np.mean(self._Xhat[ind, None] * self._Z[ind, :], axis=0)
+                    np.mean(self._Xhat[ind][..., None] * self._Z[ind], axis=-2)
                     for ind in self._ind_S
                 ],
                 axis=0,
             )
+            if self._batch_mode:
+                xzbar_s = xzbar_s.swapaxes(0, 1)
+        else:
+            xzbar_s = 0.
 
         # 3. M step，更新参数值
-        mu_x = np.mean(self._Xhat)
+        mu_x = np.mean(self._Xhat, axis=-1)
         sigma2_x = vbar - mu_x**2
         b = (wxbar_s - self._wbar_s * xbar_s) / (vbar_s - xbar_s**2)
         a = self._wbar_s - b * xbar_s
@@ -506,183 +841,49 @@ class ContinueEM(EM):
             + b**2 * vbar_s
             - 2 * (a * self._wbar_s + b * wxbar_s - a * b * xbar_s)
         )
-
         # 迭代更新beta值
-        beta_all = params.loc["beta_x":].values
-        # beta_x = params["beta_x"]  # beta_x作为第一个计算值，是用不到的
-        beta_0 = params["beta_0"].values
-        sigma2_y = params["sigma2_y"].values
-        if self._Z is not None:
-            beta_z = params["beta_z"].values
-        for i in range(self._max_iter_inner):
-            # 关于z的一些项
-            if self._Z is not None:
-                xzd = xzbar_s @ beta_z
-                zd = self._zbar_s @ beta_z
-                dzzd = np.sum(
-                    beta_z * self._zzbar_s * beta_z[:, None], axis=(1, 2)
-                )
-                yzd = self._yzbar_s @ beta_z
-                xzd = xzbar_s @ beta_z
-            else:
-                xzd = yzd = dzzd = zd = xzd = 0.0
+        beta_all = iter_update_beta(
+            batch_mode=self._batch_mode,
+            beta_x=params[..., [self._params_ind["beta_x"]]],
+            beta_0=params[..., self._params_ind["beta_0"]],
+            sigma2_y=params[..., self._params_ind["sigma2_y"]],
+            beta_z=(
+                None
+                if self._Z is None
+                else params[..., self._params_ind["beta_z"]]
+            ),
+            xzbar_s=xzbar_s,
+            zbar_s=self._zbar_s,
+            zzbar_s=self._zzbar_s,
+            yzbar_s=self._yzbar_s,
+            xybar_s=xybar_s,
+            xbar_s=xbar_s,
+            vbar_s=vbar_s,
+            ybar_s=self._ybar_s,
+            yybar_s=self._yybar_s,
+            n_s=self._n_s,
+            max_iter=self._max_iter_inner,
+            delta1=self._delta1_inner,
+            delta2=self._delta2_inner,
+        )
 
-            # 为了避免zero variance的问题，需要使用一些通分技巧
-            sigma2_y_prod = np.array(
-                [np.prod(np.delete(sigma2_y, i)) for i in range(self._ns)]
+        if self._batch_mode:
+            return np.concatenate(
+                [mu_x[:, None], sigma2_x[:, None], a, b, sigma2_w, beta_all],
+                axis=-1,
             )
-            # beta_x
-            beta_x_new = (
-                self._n_s * (xybar_s - beta_0 * xbar_s - xzd) * sigma2_y_prod
-            ).sum() / (self._n_s * vbar_s * sigma2_y_prod).sum()
-            # beta_0
-            beta_0_new = self._ybar_s - zd - beta_x_new * xbar_s
-            # sigma2_y
-            sigma2_y_new = (
-                self._yybar_s
-                + beta_0_new**2
-                + beta_x_new**2 * vbar_s
-                + dzzd
-                - 2 * beta_0_new * self._ybar_s
-                - 2 * beta_x_new * xybar_s
-                - 2 * yzd
-                + 2 * beta_0_new * beta_x_new * xbar_s
-                + 2 * beta_0_new * zd
-                + 2 * beta_x_new * xzd
-            )
-            # beta_z
-            if self._Z is not None:
-                beta_z_new = np.linalg.inv(
-                    np.sum(
-                        self._n_s[:, None, None]
-                        * sigma2_y_new[:, None, None]
-                        * self._zzbar_s,
-                        axis=0,
-                    )
-                ) @ (
-                    self._n_s
-                    / sigma2_y_new
-                    * (
-                        self._yzbar_s
-                        - beta_0_new[:, None] * self._zbar_s
-                        - beta_x_new * xzbar_s
-                    )
-                )
-
-            # calculate the relative difference
-            beta_all_new = np.r_[
-                beta_x_new,
-                beta_0_new,
-                [] if self._Z is None else beta_z_new,
-                sigma2_y_new,
-            ]
-            rdiff = np.max(
-                np.abs(beta_all_new - beta_all)
-                / (np.abs(beta_all) + self._delta1_inner)
-            )
-            logger_embp.info(
-                f"Inner iteration {i+1}: "
-                f"relative difference is {rdiff: .4f}"
-            )
-
-            # update parameters
-            beta_all = beta_all_new
-            # beta_x = beta_x_new
-            beta_0 = beta_0_new
-            sigma2_y = sigma2_y_new
-            if self._Z is not None:
-                beta_z = beta_z_new
-
-            if rdiff < self._delta2_inner:
-                logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
-                break
-
         else:
-            logger_embp.warn("Inner iteration does not converge")
-
-        return pd.Series(
-            np.r_[
+            return np.r_[
                 mu_x,
                 sigma2_x,
                 a,
                 b,
                 sigma2_w,
                 beta_all,
-            ],
-            index=params.index,
-        )
-
-    def iter_calc_params(
-        self,
-        beta_x: float,
-        beta_0: ndarray,
-        sigma2_y: ndarray,
-        beta_z: ndarray | None,
-    ) -> tuple:
-
-        for iter_i in range(1, self._max_iter_inner + 1):
-            # 1. update beta_x
-            beta_0_long = beta_0[self._ind_inv]
-            sigma2_y_long = sigma2_y[self._ind_inv]
-            z_part = self._Z @ beta_z if self._Z is not None else 0
-            beta_x_new = (
-                (self._Y - beta_0_long - z_part) * self._Xhat / sigma2_y_long
-            ).mean() / (self._Xhat2 / sigma2_y_long).mean()
-            # 2. update beta_0
-            resid_beta0 = self._Y - z_part - beta_x_new * self._Xhat
-            beta_0_new = np.array(
-                [resid_beta0[indi].mean() for indi in self._ind_S]
-            )
-            # 3. update sigma2_y
-            beta_0_long = beta_0_new[self._ind_inv]
-            resid_sigma_2 = (
-                self._Y - beta_0_long - beta_x_new * self._Xhat - z_part
-            ) ** 2
-            sigma2_y_new = np.array(
-                [resid_sigma_2[ind_si].mean() for ind_si in self._ind_S]
-            )
-            sigma2_y_new += (
-                self._n_ms * beta_x_new**2 * self._sigma2 / self._n_s
-            )
-            # 4. update beta_z
-            if self._Z is not None:
-                sigma2_y_long = sigma2_y_new[self._ind_inv]
-                resid_z = (
-                    self._Y - beta_0_long - beta_x_new * self._Xhat
-                ) / sigma2_y_long
-                beta_z_new = (
-                    np.linalg.inv((self._Z.T * sigma2_y_long) @ self._Z)
-                    @ self._Z.T
-                    @ resid_z
-                )
-
-            # calc diff
-            diff = np.r_[
-                beta_x_new - beta_x,
-                beta_0_new - beta_0,
-                sigma2_y_new - sigma2_y,
             ]
-            if self._Z is not None:
-                diff = np.r_[diff, beta_z_new - beta_z]
-            diff = np.max(np.abs(diff))
 
-            logger_embp.info(
-                f"Inner iteration {iter_i}: difference is {diff: .4f}"
-            )
-
-            beta_x = beta_x_new
-            beta_0 = beta_0_new
-            sigma2_y = sigma2_y_new
-            if self._Z is not None:
-                beta_z = beta_z_new
-
-            if diff < self._thre_inner:
-                logger_embp.info(f"Inner iteration stop, stop iter: {iter_i}")
-                break
-
-        return beta_x, beta_0, sigma2_y, beta_z
-
-    def v_joint(self, params: pd.Series) -> ndarray:
+    def v_joint(self, params: ndarray) -> ndarray:
+        raise NotImplementedError
         mu_x = params["mu_x"]
         sigma2_x = params["sigma2_x"]
         a = params["a"].values
@@ -1048,7 +1249,6 @@ def bootstrap_estimator(
     Y_type: Literal["continue", "binary"] = False,
     n_repeat: int = 200,
     seed: int | None | Generator = None,
-    pbar: bool = True,
 ) -> pd.DataFrame:
     assert hasattr(
         estimator, "params_"
@@ -1062,44 +1262,42 @@ def bootstrap_estimator(
     if Y_type == "binary":
         Yvals = np.unique(Y)
 
-    res = []
-    estimator._pbar = False  # 将内部的所有tqdm去掉
     init_params = estimator.params_.copy()
-    for _ in tqdm(range(n_repeat), desc="Bootstrap: ", disable=not pbar):
-        ind_bootstrap = []
-        for si in Svals:
-            for is_i in [is_m, not_m]:
-                if Y_type == "continue":
-                    ind = np.nonzero((S == si) & is_i)[0]
+    ind_bootstrap = []
+    for si in Svals:
+        for is_i in [is_m, not_m]:
+            if Y_type == "continue":
+                ind = np.nonzero((S == si) & is_i)[0]
+                if len(ind) == 0:
+                    continue
+                ind_choice = seed.choice(
+                    ind, (n_repeat, len(ind)), replace=True
+                )
+                ind_bootstrap.append(ind_choice)
+            elif Y_type == "binary":
+                for yi in Yvals:
+                    ind = np.nonzero((S == si) & (Y == yi) & is_i)[0]
                     if len(ind) == 0:
                         continue
-                    ind_choice = seed.choice(ind, len(ind), replace=True)
+                    ind_choice = seed.choice(
+                        ind, (n_repeat, len(ind)), replace=True
+                    )
                     ind_bootstrap.append(ind_choice)
-                elif Y_type == "binary":
-                    for yi in Yvals:
-                        ind = np.nonzero((S == si) & (Y == yi) & is_i)[0]
-                        if len(ind) == 0:
-                            continue
-                        ind_choice = seed.choice(ind, len(ind), replace=True)
-                        ind_bootstrap.append(ind_choice)
-                else:
-                    raise NotImplementedError
-        ind_bootstrap = np.concatenate(ind_bootstrap)
+            else:
+                raise NotImplementedError
+    ind_bootstrap = np.concatenate(ind_bootstrap, axis=1)  # nbs x N
+    X_bs, Y_bs, W_bs, S_bs, Z_bs = (
+        X[ind_bootstrap],  # nbs x N
+        Y[ind_bootstrap],
+        W[ind_bootstrap],
+        S[ind_bootstrap],
+        None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
+    )
+    estimator.register_data(X_bs, S_bs, W_bs, Y_bs, Z_bs)
+    # 使用EM估计值作为初始值
+    estimator.run(init_params=np.tile(init_params[None, :], (n_repeat, 1)))
 
-        Xi, Yi, Wi, Si, Zi = (
-            X[ind_bootstrap],
-            Y[ind_bootstrap],
-            W[ind_bootstrap],
-            S[ind_bootstrap],
-            None if Z is None else Z[ind_bootstrap],
-        )
-
-        estimator.register_data(Xi, Si, Wi, Yi, Zi)
-        # 使用EM估计值作为初始值
-        estimator.run(init_params=init_params)
-        res.append(estimator.params_)
-
-    return pd.concat(res, axis=1).T
+    return estimator.params_
 
 
 class EMBP(BiomarkerPoolBase):
@@ -1223,14 +1421,27 @@ class EMBP(BiomarkerPoolBase):
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
-        self.params_ = self._estimator.params_.to_frame("estimate")
-        self.params_hist_ = self._estimator.params_hist_
+
+        params_names = []
+        for k, v in self._estimator._params_ind.items():
+            if isinstance(v, slice):
+                params_names.extend([k] * (v.stop - v.start))
+            else:
+                params_names.append(k)
+        self.params_ = pd.DataFrame(
+            {"estimate": self._estimator.params_}, index=params_names
+        )
+        self.params_hist_ = pd.DataFrame(
+            self._estimator.params_hist_, columns=params_names
+        )
 
         if not self.var_est_:
             return
 
         if self.var_est_method_ == "bootstrap":
             # 使用boostrap方法
+            if self.pbar_:
+                print("Bootstrap: ")
             res_bootstrap = bootstrap_estimator(
                 # 使用复制品，而非原始的estimator
                 estimator=deepcopy(self._estimator),
@@ -1242,10 +1453,9 @@ class EMBP(BiomarkerPoolBase):
                 Y_type=self.outcome_type_,
                 n_repeat=self.n_bootstrap_,
                 seed=self.seed_,
-                pbar=self.pbar_,
             )
             res_ci = np.quantile(
-                res_bootstrap.values,
+                res_bootstrap,
                 q=[0.025, 0.975],
                 axis=0,
             )

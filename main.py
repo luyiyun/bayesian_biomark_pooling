@@ -2,6 +2,7 @@ import logging
 import os
 import multiprocessing as mp
 import itertools
+import re
 from datetime import datetime
 from typing import Literal, Sequence
 
@@ -111,23 +112,26 @@ def temp_test_binary(ci=False, seed=0):
     print(params)
 
 
-def method_xonly(df: pd.DataFrame) -> np.ndarray:
-    df_drop = df.dropna()
-    x = df_drop["X"].values
-    y = df_drop["Y"].values
-    x = sm.add_constant(x)
-    model = sm.OLS(y, x)
+def method_xonly(
+    X: np.ndarray, Y: np.ndarray, Z: np.ndarray | None
+) -> np.ndarray:
+    notnone = ~pd.isnull(X)
+    X, Y = X[notnone], Y[notnone]
+    if Z is not None:
+        X = np.concatenate([X[:, None], Z[notnone]], axis=1)
+    X = sm.add_constant(X)
+    model = sm.OLS(Y, X)
     res = model.fit()
-    return np.r_[res.params[-1], res.conf_int()[1, :]]
+    return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
-def method_naive(df: pd.DataFrame) -> np.ndarray:
-    x = df["W"].values
-    y = df["Y"].values
-    x = sm.add_constant(x)
-    model = sm.OLS(y, x)
+def method_naive(W, Y, Z) -> np.ndarray:
+    if Z is not None:
+        W = np.concatenate([W[:, None], Z], axis=1)
+    W = sm.add_constant(W)
+    model = sm.OLS(Y, W)
     res = model.fit()
-    return np.r_[res.params[-1], res.conf_int()[1, :]]
+    return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
 def trial_once_by_simulator_and_estimator(
@@ -142,19 +146,22 @@ def trial_once_by_simulator_and_estimator(
 ) -> dict[str, np.ndarray]:
     # 1. generate data
     df = simulator.simulate(seed=seed)
+    zind = df.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
+    X = df["X"].values
+    Y = df["Y"].values
+    W = df["W"].values
+    Z = df.loc[:, zind].values if zind.any() else None
 
     # 2. other methods
     res_all = {}
     for methodi in methods:
         if methodi == "xonly":
-            res = method_xonly(df)
+            res = method_xonly(X, Y, Z)
         elif methodi == "naive":
-            res = method_naive(df)
+            res = method_naive(W, Y, Z)
         elif methodi == "EMBP":
             # 3. run model
-            estimator.fit(
-                df["X"].values, df["S"].values, df["W"].values, df["Y"].values
-            )
+            estimator.fit(X, df["S"].values, W, Y, Z)
             res = estimator.params_.values
         res_all[methodi] = res
     return res_all
@@ -170,22 +177,17 @@ def trial(
     seed: int = 0,
     repeat: int = 100,
     beta_x: float = 1.0,
+    beta_z: np.ndarray | None = None,
     n_sample_per_studies: int = 100,
     n_knowX_per_studies: int = 10,
     ci: bool = False,
     ci_method: Literal["sem", "bootstrap"] = "sem",
+    n_bootstrap: int = 200,
     max_iter: int = 1000,
     n_cores: int = 1,
     type_outcome: Literal["continue", "binary"] = "continue",
     use_gpu: bool = True,
 ):
-    log_level = logging.ERROR  # 将warning去掉
-    logger = logging.getLogger("EMBP")
-    logger.setLevel(log_level)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(log_level)
-
     # 模拟实验：
     # 1. 不同样本量，不同缺失比例下的效果,
     # 2. 一类错误 & 效能
@@ -199,6 +201,7 @@ def trial(
         beta_0=[-0.5, -0.25, 0.25, 0.5],
         n_sample_per_studies=n_sample_per_studies,
         n_knowX_per_studies=n_knowX_per_studies,
+        beta_z=beta_z,
     )
     params_ser = simulator.parameters_series
 
@@ -210,6 +213,7 @@ def trial(
             pbar=False,
             max_iter=max_iter,
             seed=seed,
+            n_bootstrap=n_bootstrap
         )
     else:
         embp_model = None
@@ -382,6 +386,13 @@ def trial(
 
 
 def main():
+    log_level = logging.ERROR  # 将warning去掉
+    logger = logging.getLogger("EMBP")
+    logger.setLevel(log_level)
+    for handler in logger.handlers:
+        if isinstance(handler, logging.StreamHandler):
+            handler.setLevel(log_level)
+
     # temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=True)
     # trial_binary(ci=False)
@@ -394,12 +405,13 @@ def main():
         n_know_x_per_studies = int(ns * rx)
         trial(
             root="./results/embp",
-            methods=["EMBP"],
+            # methods=["EMBP"],
             type_outcome="continue",
             repeat=1000,
             ci=True,
             ci_method="bootstrap",
-            n_cores=30,
+            n_bootstrap=200,
+            n_cores=20,
             beta_x=betax,
             n_sample_per_studies=ns,
             n_knowX_per_studies=n_know_x_per_studies,
