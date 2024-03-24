@@ -29,6 +29,15 @@ def batch_mat_sq(mats: ndarray):
     return mats.swapaxes(-2, -1) @ mats
 
 
+def batch_nonzero(mask):
+    if mask.ndim == 1:
+        return np.nonzero(mask)[0]
+    else:
+        return np.arange(mask.shape[0])[:, None], np.stack(
+            [np.nonzero(mask[i])[0] for i in range(mask.shape[0])],
+        )
+
+
 def ols(x_des: ndarray, y: ndarray) -> np.ndarray:
     hat_mat = np.linalg.inv(batch_mat_sq(x_des)) @ x_des.swapaxes(-2, -1)
     return batch_dot(hat_mat, y)
@@ -340,11 +349,6 @@ class EM:
 
     def prepare(self):
 
-        def nonzero_batch(mask):
-            return np.arange(mask.shape[0])[:, None], np.stack(
-                [np.nonzero(mask[i])[0] for i in range(mask.shape[0])],
-            )
-
         # 准备后续步骤中会用到的array，预先计算，节省效率
         # NOTE: 默认batch mode下，也不会出现不一致的情况。
         if self._batch_mode:
@@ -360,12 +364,8 @@ class EM:
             )
         self._is_m = pd.isnull(self._X)
         self._is_o = ~self._is_m
-        if self._batch_mode:
-            self._ind_m = nonzero_batch(self._is_m)
-            self._ind_o = nonzero_batch(self._is_o)
-        else:
-            self._ind_m = np.nonzero(self._is_m)[0]
-            self._ind_o = np.nonzero(self._is_o)[0]
+        self._ind_m = batch_nonzero(self._is_m)
+        self._ind_o = batch_nonzero(self._is_o)
 
         self._Xo = self._X[self._ind_o]
         self._Yo = self._Y[self._ind_o]
@@ -378,14 +378,14 @@ class EM:
 
         if self._batch_mode:
             self._ind_S = [
-                nonzero_batch(self._S == s[:, None]) for s in self._studies.T
+                batch_nonzero(self._S == s[:, None]) for s in self._studies.T
             ]
             self._ind_Sm = [
-                nonzero_batch((self._S == s[:, None]) & self._is_m)
+                batch_nonzero((self._S == s[:, None]) & self._is_m)
                 for s in self._studies.T
             ]
             self._ind_So = [
-                nonzero_batch((self._S == s[:, None]) & self._is_o)
+                batch_nonzero((self._S == s[:, None]) & self._is_o)
                 for s in self._studies.T
             ]
             self._ind_m_inv = (
