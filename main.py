@@ -284,7 +284,7 @@ def trial(
 
     # 4. print simple summary
     summary = {}
-    for method in ["EMBP", "xonly", "naive"]:
+    for method in methods:
         summ_i = {}
         resi = res[method]
         diff = (
