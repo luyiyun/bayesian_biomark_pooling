@@ -21,14 +21,6 @@ from .logger import logger_embp
 EPS = 1e-5
 
 
-# def batch_dot(mats: ndarray, vecs: ndarray):
-#     return (mats * vecs[..., None, :]).sum(axis=-1)
-
-
-# def batch_mat_sq(mats: ndarray):
-#     return mats.swapaxes(-2, -1) @ mats
-
-
 def batch_nonzero(mask):
     if mask.ndim == 1:
         return np.nonzero(mask)[0]
@@ -109,17 +101,6 @@ def iter_update_beta(
             yzd = np.einsum("...ij,...j->...i", yzbar_s, beta_z)
             xzd = np.einsum("...ij,...j->...i", xzbar_s, beta_z)
             dzzd = np.einusm("...i,...ij,...j->...", beta_z, zzbar_s, beta_z)
-            # if batch_mode:
-            #     dzzd = np.squeeze(
-            #         beta_z[:, None, None, :]
-            #         @ zzbar_s
-            #         @ beta_z[:, None, :, None]
-            #     )
-            # else:
-            #     dzzd = np.sum(
-            #         beta_z * zzbar_s * beta_z[..., None],
-            #         axis=(-2, -1),
-            #     )
         else:
             xzd = yzd = dzzd = zd = xzd = 0.0
 
@@ -416,12 +397,6 @@ class EM:
             [
                 indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
                 for indi in self._ind_S
-            ]
-        )
-        self._n_ms = np.array(
-            [
-                indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
-                for indi in self._ind_Sm
             ]
         )
 

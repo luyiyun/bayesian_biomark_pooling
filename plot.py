@@ -89,7 +89,10 @@ def plot_lines(
 
     for metric in ["bias", "mse", "cov_rate"]:
         fg = sns.relplot(
-            data=res,
+            data=(
+                # naive方法估计的coverage rate太不准，去掉
+                res.query("method != 'naive'") if metric == "cov_rate" else res
+            ),
             kind="line",
             x="n_sample_per_studies",
             y=metric,
@@ -98,13 +101,14 @@ def plot_lines(
             row="beta_x",
             facet_kws={"sharey": False, "sharex": False},
         )
-        fg.set(yscale="log")
+        if metric != "cov_rate":
+            fg.set(yscale="log")
         fg.savefig(f"./results/embp/{name}_{metric}.png")
 
 
 def main():
     plot_lines(
-        name="continue_bootstrap",
+        name="continue_sem",
         start="2024-03-23_17-00-00",
         end="2024-03-23_20-00-00",
         calc_x_ratio=True,
