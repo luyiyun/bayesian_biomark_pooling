@@ -416,6 +416,7 @@ def main():
             n_sample_per_studies=ns,
             n_knowX_per_studies=n_know_x_per_studies,
             seed=i,
+            # beta_z=np.random.randn(3),
         )
 
 
