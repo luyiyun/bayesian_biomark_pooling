@@ -179,7 +179,7 @@ def trial(
     beta_x: float = 1.0,
     beta_z: np.ndarray | None = None,
     n_sample_per_studies: int = 100,
-    n_knowX_per_studies: int = 10,
+    x_ratio: float = 0.1,
     ci: bool = False,
     ci_method: Literal["sem", "bootstrap"] = "sem",
     n_bootstrap: int = 200,
@@ -192,6 +192,8 @@ def trial(
     # 1. 不同样本量，不同缺失比例下的效果,
     # 2. 一类错误 & 效能
     # 3. 把参数默认值搞清楚
+
+    n_knowX_per_studies = int(n_sample_per_studies * x_ratio)
 
     simulator = Simulator(
         type_outcome=type_outcome,
@@ -277,6 +279,7 @@ def trial(
             "repeat": repeat,
             "n_sample_per_studies": n_sample_per_studies,
             "n_knowX_per_studies": n_knowX_per_studies,
+            "x_ratio": x_ratio,
             "ci": ci,
             "ci_method": ci_method,
             "max_iter": max_iter,
@@ -402,7 +405,6 @@ def main():
         )
     ):
         print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
-        n_know_x_per_studies = int(ns * rx)
         trial(
             root="./results/embp",
             # methods=["EMBP"],
@@ -414,7 +416,7 @@ def main():
             n_cores=20,
             beta_x=betax,
             n_sample_per_studies=ns,
-            n_knowX_per_studies=n_know_x_per_studies,
+            x_ratio=rx,
             seed=i,
             # beta_z=np.random.randn(3),
         )
