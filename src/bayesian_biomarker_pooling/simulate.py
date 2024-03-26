@@ -219,8 +219,7 @@ class Simulator:
 
     @property
     def parameters_series(self):
-        index, res = [], []
-        for key in [
+        keys = [
             "mu_x",
             "sigma2_x",
             "a",
@@ -229,8 +228,11 @@ class Simulator:
             "beta_x",
             "beta_0",
             "beta_z",
-            "sigma2_y",
-        ]:
+        ]
+        if self._typ_outcome == "continue":
+            keys.append("sigma2_y")
+        index, res = [], []
+        for key in keys:
             val = self._parameters[key]
             if val is None:
                 continue

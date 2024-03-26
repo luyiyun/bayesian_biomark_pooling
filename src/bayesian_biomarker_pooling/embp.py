@@ -7,6 +7,7 @@ import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
 from scipy.linalg import block_diag
+from scipy.optimize import minimize
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -210,32 +211,38 @@ def iter_update_beta(
 
 
 def logistic(
-    Xdes,
-    y,
-    lr: float = 1.0,
-    max_iter: int = 100,
-    delta1: float = 1e-3,
-    delta2: float = 1e-4,
-):
-    beta = np.zeros(Xdes.shape[1])
+    X: ndarray,
+    Y: ndarray,
+    Z: ndarray | None = None,
+    tol: float = 1e-7,
+    maxiter: int = 100,
+) -> ndarray:
+    X_des = np.stack([X, np.ones_like(X)], axis=-1)
+    if Z is not None:
+        X_des = np.concatenate([X_des, Z], axis=-1)
 
-    for i in range(max_iter):
-        p = expit(Xdes @ beta)
-        grad = Xdes.T @ (p - y)
-        hessian = (Xdes.T * p * (1 - p)) @ Xdes
-        delta = lr * np.linalg.inv(hessian) @ grad
-        beta -= delta
+    def nll(beta: ndarray, X_des: ndarray, Y: ndarray):
+        return -log_expit((2 * Y - 1) * (X_des @ beta)).sum()
 
-        rdiff = np.max(np.abs(delta) / (np.abs(beta) + delta1))
-        logger_embp.info(f"Init Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
-        if rdiff < delta2:
-            break
-    else:
-        logger_embp.warning(
-            f"Init Newton-Raphson (max_iter={max_iter}) doesn't converge"
-        )
+    def jac(beta: ndarray, X_des: ndarray, Y: ndarray):
+        p = expit(X_des @ beta)
+        return X_des.T @ (p - Y)
 
-    return beta
+    def hess(beta: ndarray, X_des: ndarray, Y: ndarray):
+        p = expit(X_des @ beta)
+        return np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
+
+    res = minimize(
+        nll,
+        np.zeros(X_des.shape[1]),
+        args=(X_des, Y),
+        jac=jac,
+        hess=hess,
+        method="Newton-CG",
+        options={"xtol": tol, "maxiter": maxiter},
+    )
+
+    return res.x
 
 
 def newton_raphson_beta(
@@ -250,41 +257,76 @@ def newton_raphson_beta(
     delta1: float = 1e-3,
     delta2: float = 1e-4,
 ):
-    beta_ = init_beta
-    for i in range(max_iter):
-        p_o = expit(Xo_des @ beta_)  # ns
-        p_m = expit(Xm_des @ beta_)  # N x nm
+    def nll(beta: ndarray):
+        return (
+            -log_expit((2 * Yo - 1) * (Xo_des @ beta)).sum()
+            - (log_expit((2 * Ym - 1) * (Xm_des @ beta)) * wIS).sum()
+        )
+
+    def jac(beta: ndarray):
+        p_o = expit(Xo_des @ beta)  # ns
+        p_m = expit(Xm_des @ beta)  # N x nm
         mul_o = p_o - Yo  # ns
         mul_m = (p_m - Ym) * wIS  # N x nm
-        grad = Xo_des.T @ mul_o + np.sum(
-            Xm_des * mul_m[..., None], axis=(0, 1)
-        )  # (1+S+p)
+        return Xo_des.T @ mul_o + np.einsum("ijk,ij->k", Xm_des, mul_m)
 
+    def hess(beta: ndarray):
+        p_o = expit(Xo_des @ beta)  # ns
+        p_m = expit(Xm_des @ beta)  # N x nm
         H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
-        H_m = np.sum(
-            (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
-            @ Xm_des,
-            axis=0,
+        H_m = np.einsum(
+            "nij,nik,ni,ni->jk", Xm_des, Xm_des, wIS, p_m * (1 - p_m)
         )
-        H = H_o + H_m
+        # np.sum(
+        #     (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
+        #     @ Xm_des,
+        #     axis=0,
+        # )
+        return H_o + H_m
 
-        beta_delta = lr * np.linalg.inv(H) @ grad
-        beta_ -= beta_delta
+    res = minimize(
+        nll,
+        init_beta,
+        method="Newton-CG",
+        jac=jac,
+        hess=hess,
+        options={"xtol": 1e-7, "maxiter": 100},
+    )
 
-        rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
-        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
-        if rdiff < delta2:
-            break
-    else:
-        logger_embp.warning(
-            f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
-        )
+    # for i in range(max_iter):
+    #     p_o = expit(Xo_des @ beta_)  # ns
+    #     p_m = expit(Xm_des @ beta_)  # N x nm
+    #     mul_o = p_o - Yo  # ns
+    #     mul_m = (p_m - Ym) * wIS  # N x nm
+    #     grad = Xo_des.T @ mul_o + np.sum(
+    #         Xm_des * mul_m[..., None], axis=(0, 1)
+    #     )  # (1+S+p)
 
-    return beta_
+    #     H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
+    #     H_m = np.sum(
+    #         (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
+    #         @ Xm_des,
+    #         axis=0,
+    #     )
+    #     H = H_o + H_m
+
+    #     beta_delta = lr * np.linalg.inv(H) @ grad
+    #     beta_ -= beta_delta
+
+    #     rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
+    #     logger_embp.info(f"M step Newton-Raphson: "
+    # "iter={i+1} diff={rdiff:.4f}")
+    #     if rdiff < delta2:
+    #         break
+    # else:
+    #     logger_embp.warning(
+    #         f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
+    #     )
+
+    return res.x
 
 
 class EM:
-
     def __init__(
         self,
         max_iter: int = 100,
@@ -310,6 +352,11 @@ class EM:
         # 如果是Generator，则default_rng会直接返回它自身
         self._seed = np.random.default_rng(random_seed)
 
+    def get_params_names(self):
+        return np.concatenate(
+            [[k] * (v.stop - v.start) for k, v in self._params_ind.items()]
+        )
+
     def register_data(
         self,
         X: ndarray,
@@ -333,7 +380,6 @@ class EM:
         self._Z = Z
 
     def prepare(self):
-
         # 准备后续步骤中会用到的array，预先计算，节省效率
         self._is_m = pd.isnull(self._X)
         self._is_o = ~self._is_m
@@ -481,7 +527,6 @@ class EM:
                 desc="EM: ",
                 disable=not self._pbar,
             ):
-
                 self.e_step(params)
                 params_new = self.m_step(params)
 
@@ -586,7 +631,6 @@ class EM:
 
 
 class ContinueEM(EM):
-
     def prepare(self):
         super().prepare()
 
@@ -915,7 +959,6 @@ class ContinueEM(EM):
 
 
 class BinaryEM(EM):
-
     def __init__(
         self,
         max_iter: int = 500,
@@ -927,9 +970,9 @@ class BinaryEM(EM):
         delta2_inner: float = 1e-6,
         delta2_var: float = 1e-2,
         pbar: bool = True,
+        random_seed: int | None | Generator = None,
         lr: float = 1.0,
         n_importance_sampling: int = 1000,
-        seed: int | None | Generator = None,
     ) -> None:
         super().__init__(
             max_iter=max_iter,
@@ -941,7 +984,7 @@ class BinaryEM(EM):
             delta2_inner=delta2_inner,
             delta2_var=delta2_var,
             pbar=pbar,
-            random_seed=seed,
+            random_seed=random_seed,
         )
         self._lr = lr
         self._nIS = n_importance_sampling
@@ -959,46 +1002,41 @@ class BinaryEM(EM):
         if self._Z is not None:
             Xo_des.append(self._Zo)
         self._Xo_des = np.concatenate(Xo_des, axis=-1)
+        self._Xm = np.zeros(self._n_m)  # 用于e-step中的newton algorithm
 
-    def init(self) -> pd.Series:
+        self._params_ind.update(
+            {
+                "beta_x": slice(2 + 3 * self._ns, 3 + 3 * self._ns),
+                "beta_0": slice(3 + 3 * self._ns, 3 + 4 * self._ns),
+                "beta_z": slice(3 + 4 * self._ns, 3 + 4 * self._ns + self._nz),
+            }
+        )
+
+    def init(self) -> ndarray:
         """初始化权重"""
         params = super().init()
-
         # beta
-        Xo_des = [np.ones((self._Xo.shape[0], 1)), self._Xo[:, None]]
-        if self._Z is not None:
-            Xo_des.append(self._Zo)
-        Xo_des = np.concatenate(Xo_des, axis=1)
-        beta = logistic(
-            Xo_des,
-            self._Yo,
-            lr=self._lr,
-            max_iter=self._max_iter_inner,
-            delta1=self._delta1_inner,
-            delta2=self._delta2_inner,
-        )
+        beta = logistic(self._Xo, self._Yo, self._Zo)
+        return np.concatenate([params, beta[[0] + [1] * self._ns]])
 
-        return pd.concat(
-            [
-                params,
-                pd.Series(
-                    [beta[1]] + [beta[0]] * self._ns + beta[2:].tolist(),
-                    index=["beta_x"]
-                    + ["beta_0"] * self._ns
-                    + ["beta_z"] * (len(beta) - 2),
-                ),
+    def e_step(self, params: ndarray):
+        mu_x, sigma2_x, a, b, sigma2_w, beta_x, beta_0 = (
+            params[..., self._params_ind[k]]
+            for k in [
+                "mu_x",
+                "sigma2_x",
+                "a",
+                "b",
+                "sigma2_w",
+                "beta_x",
+                "beta_0",
             ]
         )
-
-    def e_step(self, params: pd.Series):
-        mu_x = params["mu_x"]
-        sigma2_x = params["sigma2_x"]
-        a = params["a"].values
-        b = params["b"].values
-        sigma2_w = params["sigma2_w"].values
-        beta_x = params["beta_x"]
-        beta_z = params["beta_z"].values if self._Z is not None else 0.0
-        beta_0 = params["beta_0"].values
+        beta_z = (
+            params[..., self._params_ind["beta_z"]]
+            if self._Z is not None
+            else 0.0
+        )
 
         beta_0_m_long = beta_0[self._ind_m_inv]
         a_m_long = a[self._ind_m_inv]
@@ -1006,7 +1044,6 @@ class BinaryEM(EM):
         sigma2_w_m_long = sigma2_w[self._ind_m_inv]
 
         # 使用newton-raphson方法得到Laplacian approximation
-        Xm = 0  # init
         b_m_long_2 = b_m_long**2
         beta_x_2 = beta_x**2
         grad_const = (
@@ -1018,33 +1055,58 @@ class BinaryEM(EM):
 
         Z_part_m = 0.0 if self._Z is None else self._Zm @ beta_z
         delta_part = beta_0_m_long + Z_part_m
-        for i in range(1, self._max_iter_inner + 1):
-            p = expit(Xm * beta_x + delta_part)
-            grad = beta_x * p + grad_mul * Xm + grad_const
-            hessian = beta_x_2 * p * (1 - p) + grad_mul
 
-            xdelta = self._lr * grad / hessian
-            Xm -= xdelta
+        def nll(xm: ndarray) -> float:
+            return (
+                -log_expit((2 * self._Ym - 1) * xm * beta_x + beta_0_m_long)
+                + 0.5
+                * (self._Wm - a_m_long - b_m_long * xm) ** 2
+                / sigma2_w_m_long
+                + 0.5 * (xm - mu_x) ** 2 / sigma2_x
+            ).sum()
 
-            rdiff = np.max(np.abs(xdelta) / (np.abs(Xm) + self._delta1_inner))
-            logger_embp.info(
-                f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
-            )
-            if rdiff < self._delta2_inner:
-                break
-        else:
-            logger_embp.warning(
-                f"E step Newton-Raphson (max_iter={self._max_iter_inner})"
-                " doesn't converge"
-            )
+        def jac(xm: ndarray) -> ndarray:
+            p = expit(xm * beta_x + delta_part)
+            return beta_x * p + grad_mul * xm + grad_const
 
-        # 重新计算一次Hessian
-        p = expit(Xm * beta_x + delta_part)
+        def hess(xm: ndarray) -> ndarray:
+            p = expit(xm * beta_x + delta_part)
+            return np.diag(beta_x_2 * p * (1 - p) + grad_mul)
+
+        res = minimize(
+            nll,
+            self._Xm,
+            method="Newton-CG",
+            jac=jac,
+            hess=hess,
+            options={"xtol": 1e-7, "maxiter": 100},
+        )
+        self._Xm = res.x
+        p = expit(self._Xm * beta_x + delta_part)
         hessian = beta_x_2 * p * (1 - p) + grad_mul
+        # for i in range(1, self._max_iter_inner + 1):
+        #     p = expit(Xm * beta_x + delta_part)
+        #     grad = beta_x * p + grad_mul * Xm + grad_const
+        #     hessian = beta_x_2 * p * (1 - p) + grad_mul
+
+        #     xdelta = self._lr * grad / hessian
+        #     Xm -= xdelta
+
+        #     rdiff = np.max(np.abs(xdelta)/(np.abs(Xm) + self._delta1_inner))
+        #     logger_embp.info(
+        #         f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
+        #     )
+        #     if rdiff < self._delta2_inner:
+        #         break
+        # else:
+        #     logger_embp.warning(
+        #         f"E step Newton-Raphson (max_iter={self._max_iter_inner})"
+        #         " doesn't converge"
+        #     )
 
         # 不要使用multivariate_norm，会导致维数灾难，
         # 因为Xm的每个分量都是独立的，使用单变量的norm会好一些
-        norm_lap = norm(loc=Xm, scale=1 / np.sqrt(hessian))
+        norm_lap = norm(loc=self._Xm, scale=1 / np.sqrt(hessian))
 
         # 进行IS采样
         self._XIS = norm_lap.rvs(
@@ -1075,10 +1137,10 @@ class BinaryEM(EM):
         self._Xhat[self._is_m] = np.sum(self._XIS * self._WIS, axis=0)
         self._Xhat2[self._is_m] = np.sum(self._XIS**2 * self._WIS, axis=0)
 
-    def m_step(self, params: pd.Series) -> dict:
-        beta_x = params["beta_x"]
-        beta_z = params["beta_z"].values if self._Z is not None else []
-        beta_0 = params["beta_0"].values
+    def m_step(self, params: ndarray) -> ndarray:
+        beta_x = params[self._params_ind["beta_x"]]
+        beta_0 = params[self._params_ind["beta_0"]]
+        beta_z = [] if self._Z is None else params[self._params_ind["beta_z"]]
 
         vbar = self._Xhat2.mean()
         xbars = np.array([self._Xhat[sind].mean() for sind in self._ind_S])
@@ -1121,27 +1183,16 @@ class BinaryEM(EM):
         beta_x, beta_0 = beta_[0], beta_[1 : (self._ns + 1)]
         beta_z = beta_[(self._ns + 1) :] if self._Z is not None else None
 
-        return pd.Series(
-            np.r_[
-                mu_x,
-                sigma2_x,
-                a,
-                b,
-                sigma2_w,
-                beta_x,
-                beta_0,
-                [] if self._Z is None else beta_[(self._ns + 1) :],
-            ],
-            index=(
-                ["mu_x", "sigma2_x"]
-                + ["a"] * self._ns
-                + ["b"] * self._ns
-                + ["sigma2_w"] * self._ns
-                + ["beta_x"]
-                + ["beta_0"] * self._ns
-                + ([] if self._Z is None else ["beta_z"] * self._Z.shape[1])
-            ),
-        )
+        return np.r_[
+            mu_x,
+            sigma2_x,
+            a,
+            b,
+            sigma2_w,
+            beta_x,
+            beta_0,
+            [] if self._Z is None else beta_[(self._ns + 1) :],
+        ]
 
 
 def bootstrap_estimator(
@@ -1206,7 +1257,6 @@ def bootstrap_estimator(
 
 
 class EMBP(BiomarkerPoolBase):
-
     def __init__(
         self,
         outcome_type: Literal["continue", "binary"],
@@ -1239,10 +1289,12 @@ class EMBP(BiomarkerPoolBase):
                 )
         if use_gpu and outcome_type == "continue":
             raise NotImplementedError
-        if outcome_type == "binary" and variance_estimate_method == "sem":
-            raise NotImplementedError(
-                "use bootstrap for outcome_type = binary"
-            )
+        if outcome_type == "binary" and variance_estimate:
+            raise NotImplementedError
+        # if outcome_type == "binary" and variance_estimate_method == "sem":
+        #     raise NotImplementedError(
+        #         "use bootstrap for outcome_type = binary"
+        #     )
 
         self.outcome_type_ = outcome_type
         self.max_iter_ = max_iter
@@ -1272,6 +1324,10 @@ class EMBP(BiomarkerPoolBase):
         if self.var_est_method_ == "bootstrap":
             return ["estimate", "CI_1", "CI_2"]
         return ["estimate", "variance(log)", "std(log)", "CI_1", "CI_2"]
+
+    @property
+    def result_index(self):
+        return self._estimator.get_params_names()
 
     def fit(
         self,
@@ -1322,7 +1378,7 @@ class EMBP(BiomarkerPoolBase):
                     pbar=self.pbar_,
                     lr=self.lr_,
                     n_importance_sampling=self.nIS_,
-                    seed=self.seed_,
+                    random_seed=self.seed_,
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()

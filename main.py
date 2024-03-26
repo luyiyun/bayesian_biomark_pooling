@@ -113,35 +113,47 @@ def temp_test_binary(ci=False, seed=0):
 
 
 def method_xonly(
-    X: np.ndarray, Y: np.ndarray, Z: np.ndarray | None
+    X: np.ndarray,
+    Y: np.ndarray,
+    Z: np.ndarray | None,
+    type_outcome: Literal["binary", "continue"],
 ) -> np.ndarray:
     notnone = ~pd.isnull(X)
     X, Y = X[notnone], Y[notnone]
     if Z is not None:
         X = np.concatenate([X[:, None], Z[notnone]], axis=1)
     X = sm.add_constant(X)
-    model = sm.OLS(Y, X)
+    if type_outcome == "continue":
+        model = sm.OLS(Y, X)
+    else:
+        model = sm.GLM(Y, X, sm.families.Binomial())
     res = model.fit()
     return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
-def method_naive(W, Y, Z) -> np.ndarray:
+def method_naive(
+    W, Y, Z, type_outcome: Literal["binary", "continue"]
+) -> np.ndarray:
     if Z is not None:
         W = np.concatenate([W[:, None], Z], axis=1)
     W = sm.add_constant(W)
-    model = sm.OLS(Y, W)
+    if type_outcome == "continue":
+        model = sm.OLS(Y, W)
+    else:
+        model = sm.GLM(Y, W, sm.families.Binomial())
     res = model.fit()
     return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
 def trial_once_by_simulator_and_estimator(
+    type_outcome: Literal["continue", "binary"],
     simulator: Simulator,
     estimator: EMBP | None = None,
     seed: int | None = None,
     methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
-        "EMBP",
         "xonly",
         "naive",
+        "EMBP",
     ),
 ) -> dict[str, np.ndarray]:
     # 1. generate data
@@ -156,9 +168,9 @@ def trial_once_by_simulator_and_estimator(
     res_all = {}
     for methodi in methods:
         if methodi == "xonly":
-            res = method_xonly(X, Y, Z)
+            res = method_xonly(X, Y, Z, type_outcome)
         elif methodi == "naive":
-            res = method_naive(W, Y, Z)
+            res = method_naive(W, Y, Z, type_outcome)
         elif methodi == "EMBP":
             # 3. run model
             estimator.fit(X, df["S"].values, W, Y, Z)
@@ -170,9 +182,9 @@ def trial_once_by_simulator_and_estimator(
 def trial(
     root: str,
     methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
-        "EMBP",
         "xonly",
         "naive",
+        "EMBP",
     ),
     seed: int = 0,
     repeat: int = 100,
@@ -215,7 +227,7 @@ def trial(
             pbar=False,
             max_iter=max_iter,
             seed=seed,
-            n_bootstrap=n_bootstrap
+            n_bootstrap=n_bootstrap,
         )
     else:
         embp_model = None
@@ -224,6 +236,7 @@ def trial(
     if n_cores <= 1:
         for trial_i in tqdm(range(repeat)):
             resi = trial_once_by_simulator_and_estimator(
+                type_outcome=type_outcome,
                 simulator=simulator,
                 estimator=embp_model,
                 seed=trial_i + seed,
@@ -236,7 +249,13 @@ def trial(
             tmp_reses = [
                 pool.apply_async(
                     trial_once_by_simulator_and_estimator,
-                    (simulator, embp_model, trial_i + seed, methods),
+                    (
+                        type_outcome,
+                        simulator,
+                        embp_model,
+                        trial_i + seed,
+                        methods,
+                    ),
                 )
                 for trial_i in range(repeat)
             ]
@@ -408,16 +427,17 @@ def main():
         trial(
             root="./results/embp",
             # methods=["EMBP"],
-            type_outcome="continue",
+            type_outcome="binary",
             repeat=1000,
-            ci=True,
-            ci_method="bootstrap",
-            n_bootstrap=200,
+            ci=False,  # False for binary, True for continue
+            # ci_method="bootstrap",
+            # n_bootstrap=200,
             n_cores=20,
             beta_x=betax,
             n_sample_per_studies=ns,
             x_ratio=rx,
             seed=i,
+            max_iter=300,  # 300 for binary, 1000 for continue
             # beta_z=np.random.randn(3),
         )
 
