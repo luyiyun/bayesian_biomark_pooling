@@ -7,7 +7,7 @@ import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
 from scipy.linalg import block_diag
-from scipy.optimize import minimize
+# from scipy.optimize import minimize
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -214,35 +214,64 @@ def logistic(
     X: ndarray,
     Y: ndarray,
     Z: ndarray | None = None,
-    tol: float = 1e-7,
-    maxiter: int = 100,
+    lr: float = 1.0,
+    delta1: float = 1e-3,
+    delta2: float = 1e-7,
+    max_iter: int = 100,
 ) -> ndarray:
     X_des = np.stack([X, np.ones_like(X)], axis=-1)
     if Z is not None:
         X_des = np.concatenate([X_des, Z], axis=-1)
 
-    def nll(beta: ndarray, X_des: ndarray, Y: ndarray):
-        return -log_expit((2 * Y - 1) * (X_des @ beta)).sum()
+    # def nll(beta: ndarray, X_des: ndarray, Y: ndarray):
+    #     return -log_expit((2 * Y - 1) * (X_des @ beta)).sum()
 
-    def jac(beta: ndarray, X_des: ndarray, Y: ndarray):
-        p = expit(X_des @ beta)
-        return X_des.T @ (p - Y)
+    # def jac(beta: ndarray, X_des: ndarray, Y: ndarray):
+    #     p = expit(X_des @ beta)
+    #     return X_des.T @ (p - Y)
 
-    def hess(beta: ndarray, X_des: ndarray, Y: ndarray):
-        p = expit(X_des @ beta)
-        return np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
+    # def hess(beta: ndarray, X_des: ndarray, Y: ndarray):
+    #     p = expit(X_des @ beta)
+    #     return np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
 
-    res = minimize(
-        nll,
-        np.zeros(X_des.shape[1]),
-        args=(X_des, Y),
-        jac=jac,
-        hess=hess,
-        method="Newton-CG",
-        options={"xtol": tol, "maxiter": maxiter},
-    )
+    # res = minimize(
+    #     nll,
+    #     np.zeros(X_des.shape[1]),
+    #     args=(X_des, Y),
+    #     jac=jac,
+    #     hess=hess,
+    #     method="Newton-CG",
+    #     options={"xtol": tol, "maxiter": maxiter},
+    # )
+    # if not res.success:
+    #     logger_embp.warn(
+    #         "Init Newton-CG fails to converge, "
+    #         f"maxiter: {maxiter}, xtol: {tol}"
+    #     )
 
-    return res.x
+    # return res.x
+
+    beta_ = np.zeros(X_des.shape[1])
+    for i in range(max_iter):
+        p = expit(X_des @ beta_)
+        grad = X_des.T @ (p - Y)
+        hess = np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
+
+        beta_delta = lr * np.linalg.inv(hess) @ grad
+        beta_ -= beta_delta
+
+        rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
+        logger_embp.info(
+            f"Init step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
+        )
+        if rdiff < delta2:
+            break
+    else:
+        logger_embp.warning(
+            f"Init Newton-Raphson (max_iter={max_iter}) doesn't converge"
+        )
+
+    return beta_
 
 
 def newton_raphson_beta(
@@ -257,73 +286,82 @@ def newton_raphson_beta(
     delta1: float = 1e-3,
     delta2: float = 1e-4,
 ):
-    def nll(beta: ndarray):
-        return (
-            -log_expit((2 * Yo - 1) * (Xo_des @ beta)).sum()
-            - (log_expit((2 * Ym - 1) * (Xm_des @ beta)) * wIS).sum()
-        )
+    # def nll(beta: ndarray):
+    #     return (
+    #         -log_expit((2 * Yo - 1) * (Xo_des @ beta)).sum()
+    #         - (log_expit((2 * Ym - 1) * (Xm_des @ beta)) * wIS).sum()
+    #     )
 
-    def jac(beta: ndarray):
-        p_o = expit(Xo_des @ beta)  # ns
-        p_m = expit(Xm_des @ beta)  # N x nm
-        mul_o = p_o - Yo  # ns
-        mul_m = (p_m - Ym) * wIS  # N x nm
-        return Xo_des.T @ mul_o + np.einsum("ijk,ij->k", Xm_des, mul_m)
-
-    def hess(beta: ndarray):
-        p_o = expit(Xo_des @ beta)  # ns
-        p_m = expit(Xm_des @ beta)  # N x nm
-        H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
-        H_m = np.einsum(
-            "nij,nik,ni,ni->jk", Xm_des, Xm_des, wIS, p_m * (1 - p_m)
-        )
-        # np.sum(
-        #     (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
-        #     @ Xm_des,
-        #     axis=0,
-        # )
-        return H_o + H_m
-
-    res = minimize(
-        nll,
-        init_beta,
-        method="Newton-CG",
-        jac=jac,
-        hess=hess,
-        options={"xtol": 1e-7, "maxiter": 100},
-    )
-
-    # for i in range(max_iter):
-    #     p_o = expit(Xo_des @ beta_)  # ns
-    #     p_m = expit(Xm_des @ beta_)  # N x nm
+    # def jac(beta: ndarray):
+    #     p_o = expit(Xo_des @ beta)  # ns
+    #     p_m = expit(Xm_des @ beta)  # N x nm
     #     mul_o = p_o - Yo  # ns
     #     mul_m = (p_m - Ym) * wIS  # N x nm
-    #     grad = Xo_des.T @ mul_o + np.sum(
-    #         Xm_des * mul_m[..., None], axis=(0, 1)
-    #     )  # (1+S+p)
+    #     return Xo_des.T @ mul_o + np.einsum("ijk,ij->k", Xm_des, mul_m)
 
+    # def hess(beta: ndarray):
+    #     p_o = expit(Xo_des @ beta)  # ns
+    #     p_m = expit(Xm_des @ beta)  # N x nm
     #     H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
-    #     H_m = np.sum(
-    #         (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
-    #         @ Xm_des,
-    #         axis=0,
+    #     H_m = np.einsum(
+    #         "nij,nik,ni,ni->jk", Xm_des, Xm_des, wIS, p_m * (1 - p_m)
     #     )
-    #     H = H_o + H_m
+    #     # np.sum(
+    #     #     (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
+    #     #     @ Xm_des,
+    #     #     axis=0,
+    #     # )
+    #     return H_o + H_m
 
-    #     beta_delta = lr * np.linalg.inv(H) @ grad
-    #     beta_ -= beta_delta
-
-    #     rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
-    #     logger_embp.info(f"M step Newton-Raphson: "
-    # "iter={i+1} diff={rdiff:.4f}")
-    #     if rdiff < delta2:
-    #         break
-    # else:
-    #     logger_embp.warning(
-    #         f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
+    # res = minimize(
+    #     nll,
+    #     init_beta,
+    #     method="Newton-CG",
+    #     jac=jac,
+    #     hess=hess,
+    #     options={"xtol": 1e-7, "maxiter": max_iter},
+    # )
+    # if not res.success:
+    #     logger_embp.warn(
+    #         "M-step Newton-CG fails to converge, "
+    #         f"maxiter: {max_iter}, xtol: {1e-7}"
     #     )
+    # return res.x
 
-    return res.x
+    # NOTE: 我自己的实现更快，更稳
+    beta_ = init_beta
+    for i in range(max_iter):
+        p_o = expit(Xo_des @ beta_)  # ns
+        p_m = expit(Xm_des @ beta_)  # N x nm
+        mul_o = p_o - Yo  # ns
+        mul_m = (p_m - Ym) * wIS  # N x nm
+        grad = Xo_des.T @ mul_o + np.sum(
+            Xm_des * mul_m[..., None], axis=(0, 1)
+        )  # (1+S+p)
+
+        H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
+        H_m = np.sum(
+            (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
+            @ Xm_des,
+            axis=0,
+        )
+        H = H_o + H_m
+
+        beta_delta = lr * np.linalg.inv(H) @ grad
+        beta_ -= beta_delta
+
+        rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
+        logger_embp.info(
+            f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
+        )
+        if rdiff < delta2:
+            break
+    else:
+        logger_embp.warning(
+            f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
+        )
+
+    return beta_
 
 
 class EM:
@@ -972,8 +1010,11 @@ class BinaryEM(EM):
         pbar: bool = True,
         random_seed: int | None | Generator = None,
         lr: float = 1.0,
-        n_importance_sampling: int = 1000,
+        n_importance_sampling: int | str = 1000,
     ) -> None:
+        if isinstance(n_importance_sampling, str):
+            assert n_importance_sampling == "auto"
+
         super().__init__(
             max_iter=max_iter,
             max_iter_inner=max_iter_inner,
@@ -1017,7 +1058,7 @@ class BinaryEM(EM):
         params = super().init()
         # beta
         beta = logistic(self._Xo, self._Yo, self._Zo)
-        return np.concatenate([params, beta[[0] + [1] * self._ns]])
+        return np.concatenate([params, beta[[0] + [1] * self._ns], beta[2:]])
 
     def e_step(self, params: ndarray):
         mu_x, sigma2_x, a, b, sigma2_w, beta_x, beta_0 = (
@@ -1044,6 +1085,7 @@ class BinaryEM(EM):
         sigma2_w_m_long = sigma2_w[self._ind_m_inv]
 
         # 使用newton-raphson方法得到Laplacian approximation
+        # NOTE: 使用Scipy.Newton-CG无法收敛，反而自己的这个每次在3个步骤之内就收敛了
         b_m_long_2 = b_m_long**2
         beta_x_2 = beta_x**2
         grad_const = (
@@ -1056,56 +1098,65 @@ class BinaryEM(EM):
         Z_part_m = 0.0 if self._Z is None else self._Zm @ beta_z
         delta_part = beta_0_m_long + Z_part_m
 
-        def nll(xm: ndarray) -> float:
-            return (
-                -log_expit((2 * self._Ym - 1) * xm * beta_x + beta_0_m_long)
-                + 0.5
-                * (self._Wm - a_m_long - b_m_long * xm) ** 2
-                / sigma2_w_m_long
-                + 0.5 * (xm - mu_x) ** 2 / sigma2_x
-            ).sum()
+        # def nll(xm: ndarray) -> float:
+        #     return (
+        #         -log_expit((2 * self._Ym - 1) * xm * beta_x + beta_0_m_long)
+        #         + 0.5
+        #         * (self._Wm - a_m_long - b_m_long * xm) ** 2
+        #         / sigma2_w_m_long
+        #         + 0.5 * (xm - mu_x) ** 2 / sigma2_x
+        #     ).sum()
 
-        def jac(xm: ndarray) -> ndarray:
-            p = expit(xm * beta_x + delta_part)
-            return beta_x * p + grad_mul * xm + grad_const
+        # def jac(xm: ndarray) -> ndarray:
+        #     p = expit(xm * beta_x + delta_part)
+        #     return beta_x * p + grad_mul * xm + grad_const
 
-        def hess(xm: ndarray) -> ndarray:
-            p = expit(xm * beta_x + delta_part)
-            return np.diag(beta_x_2 * p * (1 - p) + grad_mul)
+        # def hess(xm: ndarray) -> ndarray:
+        #     p = expit(xm * beta_x + delta_part)
+        #     return np.diag(beta_x_2 * p * (1 - p) + grad_mul)
 
-        res = minimize(
-            nll,
-            self._Xm,
-            method="Newton-CG",
-            jac=jac,
-            hess=hess,
-            options={"xtol": 1e-7, "maxiter": 100},
-        )
-        self._Xm = res.x
-        p = expit(self._Xm * beta_x + delta_part)
-        hessian = beta_x_2 * p * (1 - p) + grad_mul
-        # for i in range(1, self._max_iter_inner + 1):
-        #     p = expit(Xm * beta_x + delta_part)
-        #     grad = beta_x * p + grad_mul * Xm + grad_const
-        #     hessian = beta_x_2 * p * (1 - p) + grad_mul
-
-        #     xdelta = self._lr * grad / hessian
-        #     Xm -= xdelta
-
-        #     rdiff = np.max(np.abs(xdelta)/(np.abs(Xm) + self._delta1_inner))
-        #     logger_embp.info(
-        #         f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
+        # res = minimize(
+        #     nll,
+        #     self._Xm,
+        #     method="Newton-CG",
+        #     jac=jac,
+        #     hess=hess,
+        #     options={"xtol": 1e-7, "maxiter": self._max_iter_inner},
+        # )
+        # if not res.success:
+        #     logger_embp.warn(
+        #         "E-step Newton-CG fails to converge, "
+        #         f"maxiter: {self._max_iter_inner}, xtol: {1e-7}"
         #     )
-        #     if rdiff < self._delta2_inner:
-        #         break
-        # else:
-        #     logger_embp.warning(
-        #         f"E step Newton-Raphson (max_iter={self._max_iter_inner})"
-        #         " doesn't converge"
-        #     )
+        # self._Xm = res.x
 
+        for i in range(1, self._max_iter_inner + 1):
+            p = expit(self._Xm * beta_x + delta_part)
+            grad = beta_x * p + grad_mul * self._Xm + grad_const
+            hessian = beta_x_2 * p * (1 - p) + grad_mul
+
+            xdelta = self._lr * grad / hessian
+            self._Xm -= xdelta
+
+            rdiff = np.max(
+                np.abs(xdelta) / (np.abs(self._Xm) + self._delta1_inner)
+            )
+            logger_embp.info(
+                f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
+            )
+            if rdiff < self._delta2_inner:
+                break
+        else:
+            logger_embp.warning(
+                f"E step Newton-Raphson (max_iter={self._max_iter_inner})"
+                " doesn't converge"
+            )
+
+        # 重新计算一次hessian
         # 不要使用multivariate_norm，会导致维数灾难，
         # 因为Xm的每个分量都是独立的，使用单变量的norm会好一些
+        p = expit(self._Xm * beta_x + delta_part)
+        hessian = beta_x_2 * p * (1 - p) + grad_mul
         norm_lap = norm(loc=self._Xm, scale=1 / np.sqrt(hessian))
 
         # 进行IS采样
@@ -1165,9 +1216,8 @@ class BinaryEM(EM):
         beta_ = np.r_[beta_x, beta_0, beta_z]  # 1Sp = 1+S+p
         Xm_des = [self._XIS[:, :, None], self._Cm]
         if self._Z is not None:
-            Xm_des.append(self._Zm[None, ...])
+            Xm_des.append(np.tile(self._Zm[None, ...], (self._nIS, 1, 1)))
         Xm_des = np.concatenate(Xm_des, axis=-1)  # N x nm x (1+S+p)
-
         beta_ = newton_raphson_beta(
             init_beta=beta_,
             Xo_des=self._Xo_des,

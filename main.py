@@ -1,7 +1,7 @@
 import logging
 import os
 import multiprocessing as mp
-import itertools
+# import itertools
 import re
 from datetime import datetime
 from typing import Literal, Sequence
@@ -20,7 +20,7 @@ from bayesian_biomarker_pooling.embp import EMBP
 def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
     nparams = params_hist.shape[1]
     nr = int(np.sqrt(nparams))
-    nc = (nparams + 1) // nr
+    nc = (nparams + nr - 1) // nr
     fig, axs = plt.subplots(
         nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
     )
@@ -33,13 +33,6 @@ def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
 
 
 def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
-    log_level = logging.WARNING
-    logger = logging.getLogger("EMBP")
-    logger.setLevel(log_level)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(log_level)
-
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
 
@@ -74,39 +67,41 @@ def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
 
 
 def temp_test_binary(ci=False, seed=0):
-    log_level = logging.WARNING
-    logger = logging.getLogger("EMBP")
-    logger.setLevel(log_level)
-    for handler in logger.handlers:
-        if isinstance(handler, logging.StreamHandler):
-            handler.setLevel(log_level)
-
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
 
-    simulator = Simulator(type_outcome="binary")
+    simulator = Simulator(
+        type_outcome="binary",
+        beta_z=np.random.randn(3),
+    )
     df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="binary",
         variance_estimate=ci,
-        variance_estimate_method="bootstrap",
+        # variance_estimate_method="bootstrap",
         max_iter=300,
         pbar=True,
         n_importance_sampling=1000,
-        use_gpu=True,
+        use_gpu=False,
         seed=seed,
     )
-    model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
+    model.fit(
+        df["X"].values,
+        df["S"].values,
+        df["W"].values,
+        df["Y"].values,
+        df.filter(like="Z", axis=1).values,
+    )
 
     params = model.params_
     params_hist = model.params_hist_
-    model.params_.to_csv(os.path.join(root, "temp_params.csv"))
-    params_hist.to_csv(os.path.join(root, "temp_hist.csv"))
+    model.params_.to_csv(os.path.join(root, "binary_params.csv"))
+    params_hist.to_csv(os.path.join(root, "binary_hist.csv"))
 
     plot_params_hist(
         params_hist.values,
         params_hist.columns.values,
-        os.path.join(root, "params_hist.png"),
+        os.path.join(root, "binary_params_hist.png"),
     )
 
     print(params)
@@ -408,7 +403,7 @@ def trial(
 
 
 def main():
-    log_level = logging.ERROR  # 将warning去掉
+    log_level = logging.INFO  # 将warning去掉
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
@@ -416,30 +411,29 @@ def main():
             handler.setLevel(log_level)
 
     # temp_test_continue(ci=True, ve_method="bootstrap")
-    # temp_test_binary(ci=True)
-    # trial_binary(ci=False)
-    for i, (ns, rx, betax) in enumerate(
-        itertools.product(
-            [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
-        )
-    ):
-        print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
-        trial(
-            root="./results/embp",
-            # methods=["EMBP"],
-            type_outcome="binary",
-            repeat=1000,
-            ci=False,  # False for binary, True for continue
-            # ci_method="bootstrap",
-            # n_bootstrap=200,
-            n_cores=20,
-            beta_x=betax,
-            n_sample_per_studies=ns,
-            x_ratio=rx,
-            seed=i,
-            max_iter=300,  # 300 for binary, 1000 for continue
-            # beta_z=np.random.randn(3),
-        )
+    temp_test_binary(ci=False)
+    # for i, (ns, rx, betax) in enumerate(
+    #     itertools.product(
+    #         [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
+    #     )
+    # ):
+    #     print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
+    #     trial(
+    #         root="./results/embp",
+    #         # methods=["EMBP"],
+    #         type_outcome="binary",
+    #         repeat=1000,
+    #         ci=False,  # False for binary, True for continue
+    #         # ci_method="bootstrap",
+    #         # n_bootstrap=200,
+    #         n_cores=20,
+    #         beta_x=betax,
+    #         n_sample_per_studies=ns,
+    #         x_ratio=rx,
+    #         seed=i,
+    #         max_iter=300,  # 300 for binary, 1000 for continue
+    #         # beta_z=np.random.randn(3),
+    #     )
 
 
 if __name__ == "__main__":
