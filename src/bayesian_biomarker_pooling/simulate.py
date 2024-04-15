@@ -13,7 +13,7 @@ from scipy import integrate, optimize, special, stats
 
 
 def prepare_params_source_heterogeneity(
-    *params: Union[float, Sequence[float]]
+    *params: Union[float, Sequence[float]],
 ) -> Tuple[Union[None, np.ndarray]]:
     # 通过某些参数的数量，来确定studies的数量
     # 同时需要保证这些参数的数量是一致的
@@ -70,45 +70,6 @@ def hash_dict(d: Dict) -> str:
 class Simulator:
     """可以为每个studies指定不同的样本量、可观测X样本量等。"""
 
-    # @classmethod
-    # def sample_studies(
-    #     cls,
-    #     mu_x: float = 0,
-    #     sigma2_x: float = 1,
-    #     OR: float = 1.25,
-    #     prevalence: Optional[float] = None,
-    #     n_studies: int = 4,
-    #     a_mu: float = 0.0,
-    #     a_sigma: float = 3.0,
-    #     b_mu: float = 0.0,
-    #     b_sigma: float = 3.0,
-    #     sigma2e_shape: float = 1.5,
-    #     n_sample_per_studies: Union[int, Sequence[int]] = 1000,
-    #     n_knowX_per_studies: Union[int, Sequence[int]] = 100,
-    #     n_knowX_balance: bool = False,
-    #     direction: Literal["x->w", "w->x"] = "x->w",
-    #     seed: int = 0,
-    # ):
-    #     study_seed = np.random.default_rng(seed)
-    #     a = study_seed.normal(a_mu, a_sigma, size=n_studies)
-    #     b = study_seed.normal(b_mu, b_sigma, size=n_studies)
-    #     sigma2e = ss.invgamma.rvs(
-    #         sigma2e_shape, size=n_studies, random_state=study_seed
-    #     )
-    #     return cls(
-    #         mu_x=mu_x,
-    #         sigma2_x=sigma2_x,
-    #         OR=OR,
-    #         prevalence=prevalence,
-    #         a=a,
-    #         b=b,
-    #         sigma2_e=sigma2e,
-    #         n_sample_per_studies=n_sample_per_studies,
-    #         n_knowX_per_studies=n_knowX_per_studies,
-    #         n_knowX_balance=n_knowX_balance,
-    #         direction=direction,
-    #     )
-
     def __init__(
         self,
         mu_x: float = 0.0,
@@ -117,7 +78,7 @@ class Simulator:
         beta_z: Optional[Union[float, Sequence[float]]] = None,
         mu_z: Union[float, Sequence[float]] = 0.0,
         sigma_z: Union[float, Sequence[float]] = 1.0,
-        prevalence: Optional[float] = None,
+        prevalence: Optional[Union[float, Sequence[float]]] = None,
         beta_0: Union[float, Sequence[float]] = 1.0,
         a: Sequence[float] = [-3, 1, -1, 3],
         b: Sequence[float] = [0.5, 0.75, 1.25, 1.5],
@@ -137,20 +98,36 @@ class Simulator:
             assert len(beta_z) == len(mu_z)
         if beta_z is not None and isinstance(sigma_z, abc.Sequence):
             assert len(beta_z) == len(mu_z)
+        if type_outcome == "binary":
+            assert (prevalence is None and beta_0 is not None) or (
+                prevalence is not None and beta_0 is None
+            ), "can not set prevalence and beta0 simultaneously."
 
         logger = logging.getLogger("main.simulate")
 
-        # 如果指定了prevalence，则使用prevalence来计算beta0，beta0在所有
-        # studies中都是一样的
+        # 如果指定了prevalence，则使用prevalence来计算beta0，
+        # prevalence也可以指定多个，来对应多个beta0
         if type_outcome == "binary" and prevalence is not None:
-            # compute the suitable beta0 to produce necessary prevalence
-            beta_0 = get_beta0_by_prevalence(
-                prevalence, beta_x, mu_x, sigma2_x
-            )
-            logger.info(
-                f"(pid:{os.getpid()})Get the beta0 = {beta_0:.4f} "
-                f"by prevalence {prevalence:.4f}"
-            )
+            if isinstance(prevalence, float):
+                # compute the suitable beta0 to produce necessary prevalence
+                beta_0 = get_beta0_by_prevalence(
+                    prevalence, beta_x, mu_x, sigma2_x
+                )
+                logger.info(
+                    f"(pid:{os.getpid()})Get the beta0 = {beta_0:.4f} "
+                    f"by prevalence {prevalence:.4f}"
+                )
+            elif isinstance(prevalence, abc.Sequence):
+                beta_0 = []
+                for pi in prevalence:
+                    beta_0i = get_beta0_by_prevalence(
+                        pi, beta_x, mu_x, sigma2_x
+                    )
+                    beta_0.append(beta_0i)
+                logger.info(
+                    f"(pid:{os.getpid()})Get the beta0 = {str(beta_0)} "
+                    f"by prevalence {str(prevalence)}"
+                )
 
         # 通过某些参数的数量，来确定studies的数量
         # 同时需要保证这些参数的数量是一致的

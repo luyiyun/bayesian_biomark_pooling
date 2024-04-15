@@ -7,7 +7,8 @@ import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
 from scipy.linalg import block_diag
-# from scipy.optimize import minimize
+
+from scipy.optimize import minimize, minimize_scalar
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -20,6 +21,7 @@ from .logger import logger_embp
 
 
 EPS = 1e-5
+LOGIT_3 = 6.9067548
 
 
 def batch_nonzero(mask):
@@ -223,41 +225,13 @@ def logistic(
     if Z is not None:
         X_des = np.concatenate([X_des, Z], axis=-1)
 
-    # def nll(beta: ndarray, X_des: ndarray, Y: ndarray):
-    #     return -log_expit((2 * Y - 1) * (X_des @ beta)).sum()
-
-    # def jac(beta: ndarray, X_des: ndarray, Y: ndarray):
-    #     p = expit(X_des @ beta)
-    #     return X_des.T @ (p - Y)
-
-    # def hess(beta: ndarray, X_des: ndarray, Y: ndarray):
-    #     p = expit(X_des @ beta)
-    #     return np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
-
-    # res = minimize(
-    #     nll,
-    #     np.zeros(X_des.shape[1]),
-    #     args=(X_des, Y),
-    #     jac=jac,
-    #     hess=hess,
-    #     method="Newton-CG",
-    #     options={"xtol": tol, "maxiter": maxiter},
-    # )
-    # if not res.success:
-    #     logger_embp.warn(
-    #         "Init Newton-CG fails to converge, "
-    #         f"maxiter: {maxiter}, xtol: {tol}"
-    #     )
-
-    # return res.x
-
     beta_ = np.zeros(X_des.shape[1])
     for i in range(max_iter):
         p = expit(X_des @ beta_)
         grad = X_des.T @ (p - Y)
         hess = np.einsum("ij,i,ik->jk", X_des, p * (1 - p), X_des)
 
-        beta_delta = lr * np.linalg.inv(hess) @ grad
+        beta_delta = lr * np.linalg.solve(hess, grad)
         beta_ -= beta_delta
 
         rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
@@ -286,74 +260,90 @@ def newton_raphson_beta(
     delta1: float = 1e-3,
     delta2: float = 1e-4,
 ):
-    # def nll(beta: ndarray):
-    #     return (
-    #         -log_expit((2 * Yo - 1) * (Xo_des @ beta)).sum()
-    #         - (log_expit((2 * Ym - 1) * (Xm_des @ beta)) * wIS).sum()
-    #     )
+    # def obj(beta, Xo_des, Xm_des, wIS, Yo):
+    #     p_o = log_expit((2 * Yo - 1) * (Xo_des @ beta))  # ns
+    #     p_m = log_expit((2 * Ym - 1) * (Xm_des @ beta))  # N x nm
+    #     return -(p_o.sum() + (p_m * wIS).sum())
 
-    # def jac(beta: ndarray):
+    # def jac(beta, Xo_des, Xm_des, wIS, Yo):
     #     p_o = expit(Xo_des @ beta)  # ns
     #     p_m = expit(Xm_des @ beta)  # N x nm
     #     mul_o = p_o - Yo  # ns
     #     mul_m = (p_m - Ym) * wIS  # N x nm
-    #     return Xo_des.T @ mul_o + np.einsum("ijk,ij->k", Xm_des, mul_m)
+    #     grad = Xo_des.T @ mul_o + np.einsum("nij,ni->j", Xm_des, mul_m)
+    #     return grad
 
-    # def hess(beta: ndarray):
+    # def hess(beta, Xo_des, Xm_des, wIS, Yo):
     #     p_o = expit(Xo_des @ beta)  # ns
     #     p_m = expit(Xm_des @ beta)  # N x nm
-    #     H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
+    #     H_o = np.einsum("ij,i,ik->jk", Xo_des, p_o * (1 - p_o), Xo_des)
     #     H_m = np.einsum(
-    #         "nij,nik,ni,ni->jk", Xm_des, Xm_des, wIS, p_m * (1 - p_m)
+    #         "nij,ni,nik->jk", Xm_des, p_m * (1 - p_m) * wIS, Xm_des
     #     )
-    #     # np.sum(
-    #     #     (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
-    #     #     @ Xm_des,
-    #     #     axis=0,
-    #     # )
-    #     return H_o + H_m
+    #     H = H_o + H_m
+    #     return H
 
     # res = minimize(
-    #     nll,
-    #     init_beta,
-    #     method="Newton-CG",
+    #     fun=obj,
+    #     x0=init_beta,
+    #     args=(Xo_des, Xm_des, wIS, Yo),
     #     jac=jac,
     #     hess=hess,
-    #     options={"xtol": 1e-7, "maxiter": max_iter},
+    #     method="Newton-CG",
+    #     options={"xtol": 1e-6, "maxiter": 100},
     # )
     # if not res.success:
-    #     logger_embp.warn(
-    #         "M-step Newton-CG fails to converge, "
-    #         f"maxiter: {max_iter}, xtol: {1e-7}"
+    #     logger_embp.warning(
+    #         f"M step optimiztion fail to converge, msg: {res.message}"
     #     )
     # return res.x
 
-    # NOTE: 我自己的实现更快，更稳
+    # NOTE: 我自己的实现更快
     beta_ = init_beta
     for i in range(max_iter):
         p_o = expit(Xo_des @ beta_)  # ns
         p_m = expit(Xm_des @ beta_)  # N x nm
         mul_o = p_o - Yo  # ns
         mul_m = (p_m - Ym) * wIS  # N x nm
-        grad = Xo_des.T @ mul_o + np.sum(
-            Xm_des * mul_m[..., None], axis=(0, 1)
-        )  # (1+S+p)
-
-        H_o = (Xo_des.T * p_o * (1 - p_o)) @ Xo_des
-        H_m = np.sum(
-            (Xm_des * (wIS * p_m * (1 - p_m))[..., None]).swapaxes(1, 2)
-            @ Xm_des,
-            axis=0,
+        grad = Xo_des.T @ mul_o + np.einsum("nij,ni->j", Xm_des, mul_m)
+        H_o = np.einsum("ij,i,ik->jk", Xo_des, p_o * (1 - p_o), Xo_des)
+        H_m = np.einsum(
+            "nij,ni,nik->jk", Xm_des, p_m * (1 - p_m) * wIS, Xm_des
         )
         H = H_o + H_m
 
-        beta_delta = lr * np.linalg.inv(H) @ grad
-        beta_ -= beta_delta
+        try:
+            beta_delta = np.linalg.solve(H, grad)
+        except np.linalg.LinAlgError as e:
+            np.save("./Xo_des_tmp.npy", Xo_des)
+            np.save("./Yo_tmp.npy", Yo)
+            # print(np.cov(Xo_des.T))
+            # print(H)
+            # print(grad)
+            # import statsmodels.api as sm
+
+            # model = sm.Logit(Yo, Xo_des)
+            # res = model.fit()
+            # print(res.summary())
+            raise e
+
+        def obj(lr):
+            new_beta = beta_ - lr * beta_delta
+            p_o = log_expit((2 * Yo - 1) * (Xo_des @ new_beta))  # ns
+            p_m = log_expit((2 * Ym - 1) * (Xm_des @ new_beta))  # N x nm
+            return -(p_o.sum() + (p_m * wIS).sum())
+
+        res = minimize_scalar(obj, bounds=(0., 1.))
+        if not res.success:
+            logger_embp.warning(
+                "M step optimiztion lr searching fail to converge, "
+                f"msg: {res.message}"
+            )
+        beta_delta *= res.x
+        beta_ = beta_ - beta_delta
 
         rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
-        logger_embp.info(
-            f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
-        )
+        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
         if rdiff < delta2:
             break
     else:
@@ -554,13 +544,16 @@ class EM:
     def m_step(self, params: ndarray) -> ndarray:
         raise NotImplementedError
 
+    def after_m_step(self):
+        pass
+
     def run(self, init_params: ndarray | None = None):
         self.prepare()
 
         params = self.init() if init_params is None else init_params
         self.params_hist_ = [params]
         with logging_redirect_tqdm(loggers=[logger_embp]):
-            for iter_i in tqdm(
+            for self._iter_i in tqdm(
                 range(1, self._max_iter + 1),
                 desc="EM: ",
                 disable=not self._pbar,
@@ -573,15 +566,17 @@ class EM:
                     / (np.abs(params) + self._delta1),
                 )
                 logger_embp.info(
-                    f"EM iteration {iter_i}: "
+                    f"EM iteration {self._iter_i}: "
                     f"relative difference is {rdiff: .4f}"
                 )
                 params = params_new  # 更新
                 self.params_hist_.append(params)
 
                 if rdiff < self._delta2:  # TODO: 这里有优化的空间
-                    self.iter_convergence_ = iter_i
+                    self.iter_convergence_ = self._iter_i
                     break
+
+                self.after_m_step()
             else:
                 logger_embp.warning(
                     f"EM iteration (max_iter={self._max_iter}) "
@@ -996,25 +991,24 @@ class ContinueEM(EM):
         )
 
 
-class BinaryEM(EM):
+class BinaryEM(EM):  # TODO: 有错误！！！！
     def __init__(
         self,
-        max_iter: int = 500,
+        max_iter: int = 300,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
         delta1_inner: float = 1e-4,
         delta1_var: float = 1e-2,
-        delta2: float = 1e-4,
+        delta2: float = 1e-2,
         delta2_inner: float = 1e-6,
         delta2_var: float = 1e-2,
         pbar: bool = True,
         random_seed: int | None | Generator = None,
         lr: float = 1.0,
-        n_importance_sampling: int | str = 1000,
+        min_nIS: int = 100,
+        max_nIS: int = 5000,
     ) -> None:
-        if isinstance(n_importance_sampling, str):
-            assert n_importance_sampling == "auto"
-
+        assert max_nIS >= min_nIS
         super().__init__(
             max_iter=max_iter,
             max_iter_inner=max_iter_inner,
@@ -1028,7 +1022,8 @@ class BinaryEM(EM):
             random_seed=random_seed,
         )
         self._lr = lr
-        self._nIS = n_importance_sampling
+        self._nIS = self._min_nIS = min_nIS
+        self._max_nIS = max_nIS
 
     def prepare(self):
         super().prepare()
@@ -1037,7 +1032,7 @@ class BinaryEM(EM):
         for i in range(self._ns):
             C[self._ind_S[i], i] = 1
         self._Co = C[self._is_o, :]
-        self._Cm = np.tile(C[None, self._is_m, :], (self._nIS, 1, 1))
+        self._Cm_ptype = C[self._is_m, :]
 
         Xo_des = [self._Xo[:, None], self._Co]  # 360 * 5
         if self._Z is not None:
@@ -1052,9 +1047,12 @@ class BinaryEM(EM):
                 "beta_z": slice(3 + 4 * self._ns, 3 + 4 * self._ns + self._nz),
             }
         )
+        self._nparams = 3 + 4 * self._ns + self._nz
 
     def init(self) -> ndarray:
         """初始化权重"""
+        # res = self._seed.random(self._nparams)
+        # return res
         params = super().init()
         # beta
         beta = logistic(self._Xo, self._Yo, self._Zo)
@@ -1086,56 +1084,31 @@ class BinaryEM(EM):
 
         # 使用newton-raphson方法得到Laplacian approximation
         # NOTE: 使用Scipy.Newton-CG无法收敛，反而自己的这个每次在3个步骤之内就收敛了
-        b_m_long_2 = b_m_long**2
-        beta_x_2 = beta_x**2
-        grad_const = (
-            -beta_x * self._Ym
-            + b_m_long * (a_m_long - self._Wm) / sigma2_w_m_long
-            - mu_x / sigma2_x
+        p_mult = sigma2_w * sigma2_x * beta_x
+        p2_mult = p_mult * beta_x
+        x_mult = sigma2_x * b**2 + sigma2_w
+        const_part = sigma2_w * mu_x - sigma2_x * b * a
+
+        const_m_long = (
+            p_mult[self._ind_m_inv] * self._Ym
+            + (sigma2_x * b)[self._ind_m_inv] * self._Wm
+            + const_part[self._ind_m_inv]
         )
-        grad_mul = b_m_long_2 / sigma2_w_m_long + 1 / sigma2_x
+        p_mult_m_long = p_mult[self._ind_m_inv]
+        p2_mult_m_long = p2_mult[self._ind_m_inv]
+        x_mult_m_long = x_mult[self._ind_m_inv]
 
         Z_part_m = 0.0 if self._Z is None else self._Zm @ beta_z
         delta_part = beta_0_m_long + Z_part_m
 
-        # def nll(xm: ndarray) -> float:
-        #     return (
-        #         -log_expit((2 * self._Ym - 1) * xm * beta_x + beta_0_m_long)
-        #         + 0.5
-        #         * (self._Wm - a_m_long - b_m_long * xm) ** 2
-        #         / sigma2_w_m_long
-        #         + 0.5 * (xm - mu_x) ** 2 / sigma2_x
-        #     ).sum()
-
-        # def jac(xm: ndarray) -> ndarray:
-        #     p = expit(xm * beta_x + delta_part)
-        #     return beta_x * p + grad_mul * xm + grad_const
-
-        # def hess(xm: ndarray) -> ndarray:
-        #     p = expit(xm * beta_x + delta_part)
-        #     return np.diag(beta_x_2 * p * (1 - p) + grad_mul)
-
-        # res = minimize(
-        #     nll,
-        #     self._Xm,
-        #     method="Newton-CG",
-        #     jac=jac,
-        #     hess=hess,
-        #     options={"xtol": 1e-7, "maxiter": self._max_iter_inner},
-        # )
-        # if not res.success:
-        #     logger_embp.warn(
-        #         "E-step Newton-CG fails to converge, "
-        #         f"maxiter: {self._max_iter_inner}, xtol: {1e-7}"
-        #     )
-        # self._Xm = res.x
-
         for i in range(1, self._max_iter_inner + 1):
             p = expit(self._Xm * beta_x + delta_part)
-            grad = beta_x * p + grad_mul * self._Xm + grad_const
-            hessian = beta_x_2 * p * (1 - p) + grad_mul
 
-            xdelta = self._lr * grad / hessian
+            xdelta = (
+                self._lr
+                * (p_mult_m_long * p + x_mult_m_long * self._Xm - const_m_long)
+                / (p2_mult_m_long * p * (1 - p) + x_mult_m_long)
+            )
             self._Xm -= xdelta
 
             rdiff = np.max(
@@ -1156,8 +1129,10 @@ class BinaryEM(EM):
         # 不要使用multivariate_norm，会导致维数灾难，
         # 因为Xm的每个分量都是独立的，使用单变量的norm会好一些
         p = expit(self._Xm * beta_x + delta_part)
-        hessian = beta_x_2 * p * (1 - p) + grad_mul
-        norm_lap = norm(loc=self._Xm, scale=1 / np.sqrt(hessian))
+        hess_inv = (sigma2_w * sigma2_x)[self._ind_m_inv] / (
+            p2_mult_m_long * p * (1 - p) + x_mult_m_long
+        )
+        norm_lap = norm(loc=self._Xm, scale=np.sqrt(hess_inv) + EPS)  # TODO: 这个EPS可能不是必须的
 
         # 进行IS采样
         self._XIS = norm_lap.rvs(
@@ -1165,10 +1140,7 @@ class BinaryEM(EM):
         )  # N x n_m
 
         # 计算对应的(normalized) importance weights
-        pIS = log_expit(
-            (2 * self._Ym - 1)
-            * (beta_0_m_long + beta_x * self._XIS + Z_part_m)
-        )
+        pIS = log_expit((2 * self._Ym - 1) * (beta_x * self._XIS + delta_part))
         pIS -= 0.5 * (
             (self._Wm - a_m_long - b_m_long * self._XIS) ** 2 / sigma2_w_m_long
             + (self._XIS - mu_x) ** 2 / sigma2_x
@@ -1189,10 +1161,6 @@ class BinaryEM(EM):
         self._Xhat2[self._is_m] = np.sum(self._XIS**2 * self._WIS, axis=0)
 
     def m_step(self, params: ndarray) -> ndarray:
-        beta_x = params[self._params_ind["beta_x"]]
-        beta_0 = params[self._params_ind["beta_0"]]
-        beta_z = [] if self._Z is None else params[self._params_ind["beta_z"]]
-
         vbar = self._Xhat2.mean()
         xbars = np.array([self._Xhat[sind].mean() for sind in self._ind_S])
         vbars = np.array([self._Xhat2[sind].mean() for sind in self._ind_S])
@@ -1213,13 +1181,16 @@ class BinaryEM(EM):
         )
 
         # 使用newton-raphson算法更新beta_x,beta_0,beta_z
-        beta_ = np.r_[beta_x, beta_0, beta_z]  # 1Sp = 1+S+p
-        Xm_des = [self._XIS[:, :, None], self._Cm]
+        beta_all = params[self._params_ind["beta_x"].start :]
+        Xm_des = [
+            self._XIS[:, :, None],
+            np.tile(self._Cm_ptype[None, ...], (self._nIS, 1, 1)),
+        ]
         if self._Z is not None:
             Xm_des.append(np.tile(self._Zm[None, ...], (self._nIS, 1, 1)))
         Xm_des = np.concatenate(Xm_des, axis=-1)  # N x nm x (1+S+p)
-        beta_ = newton_raphson_beta(
-            init_beta=beta_,
+        beta_all = newton_raphson_beta(
+            init_beta=beta_all,
             Xo_des=self._Xo_des,
             Xm_des=Xm_des,
             Yo=self._Yo,
@@ -1230,8 +1201,6 @@ class BinaryEM(EM):
             delta1=self._delta1_inner,
             delta2=self._delta2_inner,
         )
-        beta_x, beta_0 = beta_[0], beta_[1 : (self._ns + 1)]
-        beta_z = beta_[(self._ns + 1) :] if self._Z is not None else None
 
         return np.r_[
             mu_x,
@@ -1239,10 +1208,18 @@ class BinaryEM(EM):
             a,
             b,
             sigma2_w,
-            beta_x,
-            beta_0,
-            [] if self._Z is None else beta_[(self._ns + 1) :],
+            beta_all,
         ]
+
+    def after_m_step(self):
+        if self._max_nIS > self._min_nIS:
+            self._nIS = self._min_nIS + int(
+                (self._max_nIS - self._min_nIS)
+                * expit(2 * LOGIT_3 * self._iter_i / self._max_iter - LOGIT_3)
+            )
+            logger_embp.info(
+                f"Update Monte Carlo Sampling size to {self._nIS}."
+            )
 
 
 def bootstrap_estimator(
@@ -1310,15 +1287,16 @@ class EMBP(BiomarkerPoolBase):
     def __init__(
         self,
         outcome_type: Literal["continue", "binary"],
-        max_iter: int = 500,
+        max_iter: int | None = None,
         max_iter_inner: int = 100,
         delta1: float = 1e-3,
         delta1_inner: float = 1e-4,
-        delta2: float = 1e-7,
+        delta2: float | None = None,
         delta2_inner: float = 1e-7,
         delta1_var: float = 1e-1,
         delta2_var: float = 1e-3,
-        n_importance_sampling: int = 1000,
+        min_nIS: int = 100,
+        max_nIS: int = 5000,
         lr: float = 1.0,
         variance_estimate: bool = False,
         variance_estimate_method: Literal["sem", "bootstrap"] = "sem",
@@ -1347,15 +1325,20 @@ class EMBP(BiomarkerPoolBase):
         #     )
 
         self.outcome_type_ = outcome_type
-        self.max_iter_ = max_iter
+        self.max_iter_ = (
+            max_iter or {"continue": 1000, "binary": 300}[outcome_type]
+        )
         self.max_iter_inner_ = max_iter_inner
         self.delta1_ = delta1
         self.delta1_inner_ = delta1_inner
-        self.delta2_ = delta2
+        self.delta2_ = (
+            delta2 or {"continue": 1e-7, "binary": 1e-2}[outcome_type]
+        )
         self.delta2_inner_ = delta2_inner
         self.delta1_var_ = delta1_var
         self.delta2_var_ = delta2_var
-        self.nIS_ = n_importance_sampling
+        self.min_nIS_ = min_nIS
+        self.max_nIS_ = max_nIS
         self.lr_ = lr
         self.pbar_ = pbar
         self.var_est_ = variance_estimate
@@ -1427,8 +1410,9 @@ class EMBP(BiomarkerPoolBase):
                     delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
                     lr=self.lr_,
-                    n_importance_sampling=self.nIS_,
                     random_seed=self.seed_,
+                    min_nIS=self.min_nIS_,
+                    max_nIS=self.max_nIS_,
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()

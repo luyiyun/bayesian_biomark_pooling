@@ -1,7 +1,7 @@
 import logging
 import os
 import multiprocessing as mp
-# import itertools
+import itertools
 import re
 from datetime import datetime
 from typing import Literal, Sequence
@@ -66,22 +66,29 @@ def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
     print(params)
 
 
-def temp_test_binary(ci=False, seed=0):
+def temp_test_binary(
+    ci=False, seed=0, beta_z=None, nsample=100, n_knowX=10, beta_x=1.0
+):
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
 
     simulator = Simulator(
         type_outcome="binary",
-        beta_z=np.random.randn(3),
+        n_sample_per_studies=nsample,
+        n_knowX_per_studies=n_knowX,
+        sigma2_y=[0.5, 0.75, 1.0, 1.25],
+        sigma2_e=[0.5, 0.75, 1.0, 1.25],
+        beta_z=beta_z,
+        beta_x=beta_x,
     )
     df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="binary",
         variance_estimate=ci,
         # variance_estimate_method="bootstrap",
-        max_iter=300,
+        # max_iter=300,
         pbar=True,
-        n_importance_sampling=1000,
+        # n_importance_sampling=100,
         use_gpu=False,
         seed=seed,
     )
@@ -90,7 +97,7 @@ def temp_test_binary(ci=False, seed=0):
         df["S"].values,
         df["W"].values,
         df["Y"].values,
-        df.filter(like="Z", axis=1).values,
+        df.filter(like="Z", axis=1).values if beta_z is not None else None,
     )
 
     params = model.params_
@@ -185,12 +192,14 @@ def trial(
     repeat: int = 100,
     beta_x: float = 1.0,
     beta_z: np.ndarray | None = None,
+    beta_0: Sequence | None = (-0.5, -0.25, 0.25, 0.5),
+    prevalence: Sequence | None = None,
     n_sample_per_studies: int = 100,
     x_ratio: float = 0.1,
     ci: bool = False,
     ci_method: Literal["sem", "bootstrap"] = "sem",
     n_bootstrap: int = 200,
-    max_iter: int = 1000,
+    max_iter: int | None = None,
     n_cores: int = 1,
     type_outcome: Literal["continue", "binary"] = "continue",
     use_gpu: bool = True,
@@ -207,7 +216,8 @@ def trial(
         beta_x=beta_x,
         sigma2_y=[0.5, 0.75, 1.0, 1.25],
         sigma2_e=[0.5, 0.75, 1.0, 1.25],
-        beta_0=[-0.5, -0.25, 0.25, 0.5],
+        beta_0=beta_0,
+        prevalence=prevalence,
         n_sample_per_studies=n_sample_per_studies,
         n_knowX_per_studies=n_knowX_per_studies,
         beta_z=beta_z,
@@ -296,7 +306,7 @@ def trial(
             "x_ratio": x_ratio,
             "ci": ci,
             "ci_method": ci_method,
-            "max_iter": max_iter,
+            "max_iter": embp_model.max_iter_,
             "n_cores": n_cores,
             "type_outcome": type_outcome,
             "use_gpu": use_gpu,
@@ -345,95 +355,52 @@ def trial(
     )
 
 
-# def trial_binary(ci=False):
-#     # 模拟实验：
-#     # 1. 不同样本量，不同缺失比例下的效果,
-#     # 2. 一类错误 & 效能
-#     # 3. 把参数默认值搞清楚
-
-#     simulator = Simulator(
-#         type_outcome="binary",
-#         beta_x=1.0,
-#         sigma2_y=[0.5, 1.0, 1.25, 1.5],
-#         beta_0=[-0.5, -0.25, 0.25, 0.5],
-#     )
-#     res_em, res_ols = [], []
-#     # res_em_ci1, res_em_ci2 = [], []
-#     for i in tqdm(range(100)):
-#         df = simulator.simulate()
-#         model = EMBP(
-#             outcome_type="binary",
-#             variance_estimate=False,
-#             pbar=False,
-#             max_iter=300,
-#             n_importance_sampling=1000,
-#             use_gpu=True,
-#         )
-#         model.fit(
-#             df["X"].values, df["S"].values, df["W"].values, df["Y"].values
-#         )
-#         resi = model.params_.loc["beta_x", "estimate"]
-#         res_em.append(resi)
-#         # res_em_ci1.append(model.params_.loc["beta_x", "CI_1"])
-#         # res_em_ci2.append(model.params_.loc["beta_x", "CI_2"])
-#         res_ols.append(model.params_hist_["beta_x"].iloc[0])
-#     true_beta_x = simulator.parameters["beta_x"]
-#     print(f"True: {true_beta_x: .6f}")
-#     res_em, res_ols = np.array(res_em), np.array(res_ols)
-#     # res_ci1, res_ci2 = np.array(res_em_ci1), np.array(res_em_ci2)
-#     # cov_rate = np.mean((res_ci1 <= true_beta_x) & (res_ci2 >= true_beta_x))
-#     print(
-#         f"OLS: {res_ols.mean(): .6f}, "
-#         f"Bias is {np.abs(res_ols.mean() - true_beta_x):.6f},"
-#         f" MSE is {np.mean((res_ols - true_beta_x) ** 2):.6f}"
-#     )
-#     print(
-#         f"EMBP: {res_em.mean(): .6f}"
-#         f", Bias is {np.abs(res_em.mean() - true_beta_x):.6f}"
-#         f", MSE is {np.mean((res_em - true_beta_x) ** 2):.6f}, "
-#         # f", Cov Rate is {cov_rate: .6f}"
-#     )
-#     # simulator = Simulator(type_outcome="binary", n_knowX_per_studies=10)
-#     # df = simulator.simulate()
-#     # print(df)
-#     # model = EMBP(outcome_type="binary")
-#     # model.fit(df["X"].values, df["S"].values,
-#                 df["W"].values, df["Y"].values)
-#     # print(simulator.parameters["beta_x"], model.params_["beta_x"])
-
-
 def main():
-    log_level = logging.INFO  # 将warning去掉
+    log_level = logging.WARNING  # 将warning去掉
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(log_level)
 
+    type_outcome = "binary"
+
     # temp_test_continue(ci=True, ve_method="bootstrap")
-    temp_test_binary(ci=False)
-    # for i, (ns, rx, betax) in enumerate(
-    #     itertools.product(
-    #         [50, 100, 150, 200], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
-    #     )
-    # ):
-    #     print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
-    #     trial(
-    #         root="./results/embp",
-    #         # methods=["EMBP"],
-    #         type_outcome="binary",
-    #         repeat=1000,
-    #         ci=False,  # False for binary, True for continue
-    #         # ci_method="bootstrap",
-    #         # n_bootstrap=200,
-    #         n_cores=20,
-    #         beta_x=betax,
-    #         n_sample_per_studies=ns,
-    #         x_ratio=rx,
-    #         seed=i,
-    #         max_iter=300,  # 300 for binary, 1000 for continue
-    #         # beta_z=np.random.randn(3),
-    #     )
+    # temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
+    for i, (ns, rx, betax) in enumerate(
+        itertools.product(
+            [100, 150, 200, 250], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
+        )
+    ):
+        print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
+        # NOTE: 特别是对于binary outcome，要非常小心的去控制模拟数据的参数，
+        # 不然容易得到比较奇怪的数据(标签的比例)，模型无法得到有效的结果。
+        trial(
+            root="./results/embp",
+            # methods=["EMBP"],
+            type_outcome=type_outcome,
+            repeat=1000,
+            ci=False,  # False for binary, True for continue
+            # ci_method="bootstrap",
+            # n_bootstrap=200,
+            n_cores=20,
+            beta_x=betax,
+            # beta_0=0.,  # 对于binary，beta_0会影响y的比例
+            beta_0=(
+                (-0.5, -0.25, 0.25, 0.5)
+                if type_outcome == "continue"
+                else None
+            ),
+            prevalence=0.5 if type_outcome == "binary" else None,
+            # prevalence=(
+            #     (0.3, 0.4, 0.6, 0.7) if type_outcome == "binary" else None
+            # ),
+            n_sample_per_studies=ns,
+            x_ratio=rx,
+            seed=i,
+            max_iter=None,  # 300 for binary, 1000 for continue
+            # beta_z=np.random.randn(3),
+        )
 
 
 if __name__ == "__main__":
