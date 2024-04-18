@@ -197,7 +197,7 @@ def main():
         "-nsps", "--nsample_per_studies", default=(100,), type=int, nargs="+"
     )
     parser.add_argument(
-        "-nxps", "--nx_per_studies", default=(10,), type=int, nargs="+"
+        "-rxps", "--ratio_x_per_studies", default=(0.1,), type=float, nargs="+"
     )
     parser.add_argument(
         "-bx", "--beta_x", default=(0.0,), type=float, nargs="+"
@@ -263,10 +263,13 @@ def main():
     # 2. 一类错误 & 效能
     # 3. 把参数默认值搞清楚
 
-    for i, (ns, nx, bx) in enumerate(
-        product(args.nsample_per_studies, args.nx_per_studies, args.beta_x)
+    for i, (ns, rx, bx) in enumerate(
+        product(
+            args.nsample_per_studies, args.ratio_x_per_studies, args.beta_x
+        )
     ):
         seedi = args.seed + i
+        nx = int(rx * ns)
 
         simulator = Simulator(
             type_outcome=args.outcome_type,
