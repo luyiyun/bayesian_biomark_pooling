@@ -1,0 +1,318 @@
+import pandas as pd
+import numpy as np
+from tqdm import tqdm
+from tqdm.contrib.logging import logging_redirect_tqdm
+from numpy import ndarray
+from numpy.random import Generator
+
+from ..logger import logger_embp
+from .utils import batch_nonzero, ols
+
+
+class EM:
+    def __init__(
+        self,
+        max_iter: int = 100,
+        max_iter_inner: int = 100,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta2: float = 1e-4,
+        delta2_inner: float = 1e-6,
+        delta1_var: float = 1e-2,
+        delta2_var: float = 1e-2,
+        pbar: bool = True,
+        random_seed: int | None | Generator = None,
+    ) -> None:
+        self._max_iter = max_iter
+        self._max_iter_inner = max_iter_inner
+        self._delta1 = delta1
+        self._delta1_inner = delta1_inner
+        self._delta2 = delta2
+        self._delta2_inner = delta2_inner
+        self._delta1_var = delta1_var
+        self._delta2_var = delta2_var
+        self._pbar = pbar
+        # 如果是Generator，则default_rng会直接返回它自身
+        self._seed = np.random.default_rng(random_seed)
+
+    def get_params_names(self):
+        return np.concatenate(
+            [[k] * (v.stop - v.start) for k, v in self._params_ind.items()]
+        )
+
+    def register_data(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+    ):
+        assert X.shape == S.shape == W.shape == Y.shape
+        if Z is not None:
+            assert X.shape == Z.shape[:-1]
+        assert X.ndim <= 2
+
+        self._batch_mode = X.ndim > 1
+        self._n_batch = X.shape[0] if self._batch_mode else 1
+
+        self._X = X
+        self._S = S
+        self._W = W
+        self._Y = Y
+        self._Z = Z
+
+    def prepare(self):
+        # 准备后续步骤中会用到的array，预先计算，节省效率
+        self._is_m = pd.isnull(self._X)
+        self._is_o = ~self._is_m
+        self._ind_m = batch_nonzero(self._is_m)
+        self._ind_o = batch_nonzero(self._is_o)
+
+        self._Xo = self._X[self._ind_o]
+        self._Yo = self._Y[self._ind_o]
+        self._Wo = self._W[self._ind_o]
+        self._Ym = self._Y[self._ind_m]
+        self._Wm = self._W[self._ind_m]
+        if self._Z is not None:
+            self._Zo = self._Z[self._ind_o]
+            self._Zm = self._Z[self._ind_m]
+        else:
+            self._Zo = self._Zm = None
+
+        # NOTE: 默认batch mode下，也不会出现不一致的情况。
+        if self._batch_mode:
+            st_seq, ind_seq = [], []
+            for i in range(self._S.shape[0]):
+                uniq_i, ind_inv_i = np.unique(self._S[i], return_inverse=True)
+                st_seq.append(uniq_i)
+                ind_seq.append(ind_inv_i)
+            self._studies, self._ind_inv = np.stack(st_seq), np.stack(ind_seq)
+            self._ind_m_inv = (
+                np.arange(self._is_m.shape[0])[:, None],
+                np.stack(
+                    [
+                        self._ind_inv[i, self._is_m[i]]
+                        for i in range(self._is_m.shape[0])
+                    ],
+                    axis=0,
+                ),
+            )
+        else:
+            self._studies, self._ind_inv = np.unique(
+                self._S, return_inverse=True
+            )
+            self._ind_m_inv = self._ind_inv[self._is_m]
+
+        # the transpose of 1-d array is still 1-d array
+        self._ind_S = [
+            batch_nonzero((self._S.T == s).T) for s in self._studies.T
+        ]
+        self._ind_Sm = [
+            batch_nonzero((self._S.T == s).T & self._is_m)
+            for s in self._studies.T
+        ]
+        self._ind_So = [
+            batch_nonzero((self._S.T == s).T & self._is_o)
+            for s in self._studies.T
+        ]
+
+        self._n = self._Y.shape[-1]
+        self._ns = self._studies.shape[-1]
+        self._nz = 0 if self._Z is None else self._Z.shape[-1]
+        self._n_o = self._is_o.sum(axis=-1)
+        self._n_m = self._is_m.sum(axis=-1)
+        self._n_s = np.array(
+            [
+                indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
+                for indi in self._ind_S
+            ]
+        )
+
+        self._wbar_s = np.stack(
+            [np.mean(self._W[ind], axis=-1) for ind in self._ind_S]
+        ).T  # 如果是1维向量，转置对其没有改变
+        self._wwbar_s = np.stack(
+            [np.mean(self._W[ind] ** 2, axis=-1) for ind in self._ind_S]
+        ).T
+
+        self._sigma_ind = np.array(
+            [1]
+            + list(range(2 + 2 * self._ns, 2 + 2 * (self._ns + 1)))
+            + list(
+                range(3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz)
+            )
+        )
+        self._params_ind = {
+            "mu_x": slice(0, 1),
+            "sigma2_x": slice(1, 2),
+            "a": slice(2, 2 + self._ns),
+            "b": slice(2 + self._ns, 2 + 2 * self._ns),
+            "sigma2_w": slice(2 + 2 * self._ns, 2 + 3 * self._ns),
+        }
+
+        self._Xhat = np.copy(self._X)
+        self._Xhat2 = self._Xhat**2
+
+    def init(self) -> ndarray:
+        """初始化参数
+
+        这里仅初始化mu_x,sigma2_x,a,b,sigma2_w，其他和outcome相关的参数需要在子类
+        中初始化
+
+        Returns:
+            dict: 参数组成的dict
+        """
+        mu_x = self._Xo.mean(axis=-1, keepdims=True)
+        sigma2_x = np.var(self._Xo, ddof=1, axis=-1, keepdims=True)
+
+        a, b, sigma2_w = [], [], []
+        for ind_so_i in self._ind_So:
+            if len(ind_so_i) == 0:
+                a.append(np.zeros(self._n_batch))
+                b.append(np.zeros(self._n_batch))
+                sigma2_w.append(np.ones(self._n_batch))
+                continue
+
+            abi, sigma2_ws_i = ols(self._X[ind_so_i], self._W[ind_so_i])
+            a.append(abi[..., 1])
+            b.append(abi[..., 0])
+            sigma2_w.append(sigma2_ws_i)
+        a, b, sigma2_w = (
+            np.stack(a, axis=-1),
+            np.stack(b, axis=-1),
+            np.stack(sigma2_w, axis=-1),
+        )
+
+        res = np.concatenate([mu_x, sigma2_x, a, b, sigma2_w], axis=-1)
+        return res
+
+    def e_step(self, params: ndarray):
+        """Expectation step
+
+        从EM算法的定义上，是计算log joint likelihood的后验期望，也就是Q function。
+        但是，在code中一般不是计算这个，而是计算Q function中关于后验期望的部分，
+        以便于后面的m step。
+        """
+        raise NotImplementedError
+
+    def m_step(self, params: ndarray) -> ndarray:
+        raise NotImplementedError
+
+    def after_m_step(self):
+        pass
+
+    def run(self, init_params: ndarray | None = None):
+        self.prepare()
+
+        params = self.init() if init_params is None else init_params
+        self.params_hist_ = [params]
+        with logging_redirect_tqdm(loggers=[logger_embp]):
+            for self._iter_i in tqdm(
+                range(1, self._max_iter + 1),
+                desc="EM: ",
+                disable=not self._pbar,
+            ):
+                self.e_step(params)
+                params_new = self.m_step(params)
+
+                rdiff = np.max(
+                    np.abs(params - params_new)
+                    / (np.abs(params) + self._delta1),
+                )
+                logger_embp.info(
+                    f"EM iteration {self._iter_i}: "
+                    f"relative difference is {rdiff: .4f}"
+                )
+                params = params_new  # 更新
+                self.params_hist_.append(params)
+
+                if rdiff < self._delta2:  # TODO: 这里有优化的空间
+                    self.iter_convergence_ = self._iter_i
+                    break
+
+                self.after_m_step()
+            else:
+                logger_embp.warning(
+                    f"EM iteration (max_iter={self._max_iter}) "
+                    "doesn't converge"
+                )
+
+        self.params_ = params
+        self.params_hist_ = np.stack(self.params_hist_)
+
+    def v_joint(self, params: pd.Series) -> ndarray:
+        raise NotImplementedError
+
+    def estimate_variance(self) -> ndarray:
+        n_params = self.params_.shape[0]
+
+        ind_sigma2 = np.nonzero(
+            self.params_.index.map(lambda x: x.startswith("sigma2"))
+        )[0]
+        params_w_log = self.params_.copy()
+        params_w_log.iloc[ind_sigma2] = np.log(params_w_log.iloc[ind_sigma2])
+
+        rind_uncovg = list(range(n_params))
+        R = []
+        with logging_redirect_tqdm(loggers=[logger_embp]):
+            for t in tqdm(
+                range(self.params_hist_.shape[0]),
+                desc="Estimate Variance: ",
+                disable=not self._pbar,
+            ):
+                params_t = self.params_hist_.iloc[t, :]
+                Rt = np.zeros((n_params, n_params)) if t == 0 else R[-1].copy()
+                for j in rind_uncovg:
+                    inpt = self.params_.copy()
+                    x = inpt.iloc[j] = params_t.iloc[j]
+                    if j in ind_sigma2:
+                        x = np.log(x)
+                    # 计算差值比来作为导数的估计
+                    dx = x - params_w_log.iloc[j]
+                    if (
+                        dx == 0
+                    ):  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
+                        continue
+
+                    self.e_step(inpt)
+                    oupt = self.m_step(inpt)
+                    # 修改sigma2为log尺度
+                    oupt.iloc[ind_sigma2] = np.log(oupt.iloc[ind_sigma2])
+
+                    Rt[j, :] = (oupt.values - params_w_log.values) / dx
+
+                # 看一下有哪些行完成了收敛
+                if t > 0:
+                    rdiff = np.max(
+                        np.abs(Rt - R[-1])
+                        / (np.abs(R[-1]) + self._delta1_var),
+                        axis=1,
+                    )
+                    new_rind_uncovg = np.nonzero(rdiff >= self._delta2_var)[0]
+                    if len(new_rind_uncovg) < len(rind_uncovg):
+                        logger_embp.info(
+                            "unfinished row ind:" + str(rind_uncovg)
+                        )
+                    rind_uncovg = new_rind_uncovg
+
+                R.append(Rt)
+                if len(rind_uncovg) == 0:
+                    break
+            else:
+                logger_embp.warn("estimate variance does not converge.")
+
+        self._R = np.stack(R, axis=0)
+        DM = R[-1]
+
+        v_joint = self.v_joint(self.params_)
+        self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
+            np.diag(np.ones(n_params)) - DM
+        )
+        # TODO: 会出现一些方差<0，可能源于
+        params_var = np.diag(self.params_cov_)
+        # if np.any(params_var < 0.0):
+        #     print(self.params_.index.values[params_var < 0.0])
+        #     dv = params_var - np.diag(v_joint)
+        #     import ipdb; ipdb.set_trace()
+        return params_var

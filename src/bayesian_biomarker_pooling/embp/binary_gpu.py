@@ -8,7 +8,7 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 from torch import Tensor
 from numpy import ndarray
 
-from .logger import logger_embp
+from ..logger import logger_embp
 
 
 def ols(x_des: Tensor, y: Tensor) -> Tensor:

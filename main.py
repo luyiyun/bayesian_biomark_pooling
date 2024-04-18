@@ -13,7 +13,7 @@ from tqdm import tqdm
 import statsmodels.api as sm
 
 from bayesian_biomarker_pooling.simulate import Simulator
-from bayesian_biomarker_pooling.embp import EMBP
+from bayesian_biomarker_pooling import EMBP
 
 
 def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
@@ -362,7 +362,7 @@ def main():
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(log_level)
 
-    type_outcome = "binary"
+    # type_outcome = "binary"
 
     temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
