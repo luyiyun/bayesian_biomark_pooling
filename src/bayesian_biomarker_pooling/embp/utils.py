@@ -25,12 +25,6 @@ def ols(
         X_des = np.concatenate([X_des, Z], axis=-1)
 
     beta, resid, _, _ = lstsq(X_des, Y)
-    # x2 = np.einsum("ij,ik->jk", X_des, X_des)
-    # x2_inv = np.linalg.inv(x2)
-    # hat_mat = np.einsum("ij,kj->ik", x2_inv, X_des)
-    # beta = np.einsum("ik,k->i", hat_mat, Y)
-    # pred = np.einsum("ij,j->i", X_des, beta)
-    # sigma2 = np.mean((Y - pred) ** 2, axis=-1)
     return beta, resid
 
 

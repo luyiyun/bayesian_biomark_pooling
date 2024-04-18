@@ -2,8 +2,11 @@ import logging
 import os
 import multiprocessing as mp
 import re
+import json
 from datetime import datetime
 from typing import Literal, Sequence
+from argparse import ArgumentParser
+from itertools import product
 
 import numpy as np
 import pandas as pd
@@ -180,226 +183,222 @@ def trial_once_by_simulator_and_estimator(
     return res_all
 
 
-def trial(
-    root: str,
-    methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
-        "xonly",
-        "naive",
-        "EMBP",
-    ),
-    seed: int = 0,
-    repeat: int = 100,
-    beta_x: float = 1.0,
-    beta_z: np.ndarray | None = None,
-    beta_0: Sequence | None = (-0.5, -0.25, 0.25, 0.5),
-    prevalence: Sequence | None = None,
-    n_sample_per_studies: int = 100,
-    x_ratio: float = 0.1,
-    ci: bool = False,
-    ci_method: Literal["sem", "bootstrap"] = "sem",
-    n_bootstrap: int = 200,
-    max_iter: int | None = None,
-    n_cores: int = 1,
-    type_outcome: Literal["continue", "binary"] = "continue",
-    use_gpu: bool = True,
-):
-    # 模拟实验：
-    # 1. 不同样本量，不同缺失比例下的效果,
-    # 2. 一类错误 & 效能
-    # 3. 把参数默认值搞清楚
-
-    n_knowX_per_studies = int(n_sample_per_studies * x_ratio)
-
-    simulator = Simulator(
-        type_outcome=type_outcome,
-        beta_x=beta_x,
-        sigma2_y=[0.5, 0.75, 1.0, 1.25],
-        sigma2_e=[0.5, 0.75, 1.0, 1.25],
-        beta_0=beta_0,
-        prevalence=prevalence,
-        n_sample_per_studies=n_sample_per_studies,
-        n_knowX_per_studies=n_knowX_per_studies,
-        beta_z=beta_z,
-    )
-    params_ser = simulator.parameters_series
-
-    if "EMBP" in methods:
-        embp_model = EMBP(
-            outcome_type=type_outcome,
-            ci=ci,
-            ci_method=ci_method,
-            pbar=False,
-            max_iter=max_iter,
-            seed=seed,
-            n_bootstrap=n_bootstrap,
-        )
-    else:
-        embp_model = None
-
-    res_arrs = {}
-    if n_cores <= 1:
-        for trial_i in tqdm(range(repeat)):
-            resi = trial_once_by_simulator_and_estimator(
-                type_outcome=type_outcome,
-                simulator=simulator,
-                estimator=embp_model,
-                seed=trial_i + seed,
-                methods=methods,
-            )
-            for k, arr in resi.items():
-                res_arrs.setdefault(k, []).append(arr)
-    else:
-        with mp.Pool(n_cores) as pool:
-            tmp_reses = [
-                pool.apply_async(
-                    trial_once_by_simulator_and_estimator,
-                    (
-                        type_outcome,
-                        simulator,
-                        embp_model,
-                        trial_i + seed,
-                        methods,
-                    ),
-                )
-                for trial_i in range(repeat)
-            ]
-            for tmp_resi in tqdm(tmp_reses):
-                resi = tmp_resi.get()
-                for k, arr in resi.items():
-                    res_arrs.setdefault(k, []).append(arr)
-
-    # 3. collect results
-    res_all = {
-        "true": xr.DataArray(
-            params_ser.values,
-            dims=("params",),
-            coords={"params": params_ser.index.values},
-        ),
-    }
-    for k, arrs in res_arrs.items():
-        if k == "EMBP":
-            res_all[k] = xr.DataArray(
-                np.stack(arrs, axis=0),
-                dims=("repeat", "params", "statistic"),
-                coords={
-                    "params": params_ser.index.values,
-                    "statistic": embp_model.result_columns,
-                },
-            )
-        else:
-            res_all[k] = xr.DataArray(
-                np.stack(arrs, axis=0)[:, None, :],
-                dims=("repeat", "params", "statistic"),
-                coords={
-                    "params": ["beta_x"],
-                    "statistic": ["estimate", "CI_1", "CI_2"],
-                },
-            )
-    res = xr.Dataset(
-        res_all,
-        attrs={
-            "seed": seed,
-            "repeat": repeat,
-            "n_sample_per_studies": n_sample_per_studies,
-            "n_knowX_per_studies": n_knowX_per_studies,
-            "x_ratio": x_ratio,
-            "ci": ci,
-            "ci_method": ci_method,
-            "max_iter": embp_model.max_iter_,
-            "n_cores": n_cores,
-            "type_outcome": type_outcome,
-            "use_gpu": use_gpu,
-        },
-    )
-
-    # 4. print simple summary
-    summary = {}
-    for method in methods:
-        summ_i = {}
-        resi = res[method]
-        diff = (
-            resi.sel(params="beta_x", statistic="estimate").values
-            - params_ser["beta_x"]
-        )
-        summ_i["bias"] = diff.mean()
-        summ_i["mse"] = (diff**2).mean()
-        if ci:
-            in_ci = (
-                resi.sel(params="beta_x", statistic="CI_1").values
-                <= params_ser["beta_x"]
-            ) & (
-                resi.sel(params="beta_x", statistic="CI_2").values
-                >= params_ser["beta_x"]
-            )
-            summ_i["cov_rate"] = in_ci.mean()
-        summary[method] = summ_i
-    summary = pd.DataFrame.from_dict(summary)
-    print(summary)
-    summary = xr.DataArray(
-        summary.values,
-        dims=("metric", "method"),
-        coords={
-            "metric": summary.index.values,
-            "method": summary.columns.values,
-        },
-    )
-    res["summary"] = summary
-
-    # 5. save results
-    os.makedirs(root, exist_ok=True)
-    res.to_netcdf(
-        os.path.join(
-            root, f"{type_outcome}-{datetime.now():%Y-%m-%d_%H-%M-%S}.nc"
-        )
-    )
-
-
 def main():
-    log_level = logging.WARNING  # 将warning去掉
+
+    parser = ArgumentParser()
+
+    parser.add_argument(
+        "-ot",
+        "--outcome_type",
+        default="continue",
+        choices=["continue", "binary"],
+    )
+    parser.add_argument(
+        "-nsps", "--nsample_per_studies", default=(100,), type=int, nargs="+"
+    )
+    parser.add_argument(
+        "-nxps", "--nx_per_studies", default=(10,), type=int, nargs="+"
+    )
+    parser.add_argument(
+        "-bx", "--beta_x", default=(0.0,), type=float, nargs="+"
+    )
+    parser.add_argument(
+        "-b0",
+        "--beta_0",
+        default=(-0.5, -0.25, 0.25, 0.5),
+        type=float,
+        nargs=4,
+    )
+    parser.add_argument("-bz", "--beta_z", default=None, type=float, nargs="*")
+    parser.add_argument("-pr", "--prevalence", default=0.5, type=float)
+
+    parser.add_argument(
+        "-m",
+        "--methods",
+        default=("EMBP", "xonly", "naive"),
+        nargs="+",
+        choices=("EMBP", "xonly", "naive"),
+    )
+    parser.add_argument("-nr", "--nrepeat", default=1000, type=int)
+    parser.add_argument("-nc", "--ncores", default=1, type=int)
+    parser.add_argument("-t", "--test", action="store_true")
+    parser.add_argument(
+        "-l",
+        "--log",
+        default="warn",
+        choices=["error", "warn", "info", "debug"],
+    )
+    parser.add_argument("--root", default="./results/embp/")
+    parser.add_argument("--name", default=None)
+
+    parser.add_argument("--no_ci", action="store_true")
+    parser.add_argument(
+        "--ci_method", default="bootstrap", choices=("bootstrap", "sem")
+    )
+    parser.add_argument("--max_iter", default=None, type=int)
+    parser.add_argument("--seed", default=0, type=int)
+    parser.add_argument("--n_bootstrap", default=200, type=int)
+
+    args = parser.parse_args()
+
+    log_level = {
+        "error": logging.ERROR,
+        "warn": logging.WARNING,
+        "info": logging.INFO,
+        "debug": logging.DEBUG,
+    }[args.log]
     logger = logging.getLogger("EMBP")
     logger.setLevel(log_level)
     for handler in logger.handlers:
         if isinstance(handler, logging.StreamHandler):
             handler.setLevel(log_level)
 
-    # type_outcome = "binary"
+    if args.test:
+        temp_test_continue(ci=True, ve_method="bootstrap")
+        temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
+        return
 
-    temp_test_continue(ci=True, ve_method="bootstrap")
-    # temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
-    # for i, (ns, rx, betax) in enumerate(
-    #     itertools.product(
-    #         [100, 150, 200, 250], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
-    #     )
-    # ):
-    #     print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
-    #     # NOTE: 特别是对于binary outcome，要非常小心的去控制模拟数据的参数，
-    #     # 不然容易得到比较奇怪的数据(标签的比例)，模型无法得到有效的结果。
-    #     trial(
-    #         root="./results/embp",
-    #         # methods=["EMBP"],
-    #         type_outcome=type_outcome,
-    #         repeat=1000,
-    #         ci=False,  # False for binary, True for continue
-    #         # ci_method="bootstrap",
-    #         # n_bootstrap=200,
-    #         n_cores=20,
-    #         beta_x=betax,
-    #         # beta_0=0.,  # 对于binary，beta_0会影响y的比例
-    #         beta_0=(
-    #             (-0.5, -0.25, 0.25, 0.5)
-    #             if type_outcome == "continue"
-    #             else None
-    #         ),
-    #         prevalence=0.5 if type_outcome == "binary" else None,
-    #         # prevalence=(
-    #         #     (0.3, 0.4, 0.6, 0.7) if type_outcome == "binary" else None
-    #         # ),
-    #         n_sample_per_studies=ns,
-    #         x_ratio=rx,
-    #         seed=i,
-    #         max_iter=None,  # 300 for binary, 1000 for continue
-    #         # beta_z=np.random.randn(3),
-    #     )
+    # 模拟实验：
+    # 1. 不同样本量，不同缺失比例下的效果,
+    # 2. 一类错误 & 效能
+    # 3. 把参数默认值搞清楚
+
+    for i, (ns, nx, bx) in enumerate(
+        product(args.nsample_per_studies, args.nx_per_studies, args.beta_x)
+    ):
+        seedi = args.seed + i
+
+        simulator = Simulator(
+            type_outcome=args.outcome_type,
+            beta_x=bx,
+            sigma2_y=[0.5, 0.75, 1.0, 1.25],
+            sigma2_e=[0.5, 0.75, 1.0, 1.25],
+            beta_0=args.beta_0,
+            prevalence=args.prevalence,
+            n_sample_per_studies=ns,
+            n_knowX_per_studies=nx,
+            beta_z=args.beta_z,
+        )
+        params_ser = simulator.parameters_series
+
+        if "EMBP" in args.methods:
+            embp_model = EMBP(
+                outcome_type=args.outcome_type,
+                ci=not args.no_ci,
+                ci_method=args.ci_method,
+                pbar=False,
+                max_iter=args.max_iter,
+                seed=seedi,
+                n_bootstrap=args.n_bootstrap,
+            )
+        else:
+            embp_model = None
+
+        res_arrs = {}
+        if args.ncores <= 1:
+            for j in tqdm(range(args.nrepeat)):
+                resi = trial_once_by_simulator_and_estimator(
+                    type_outcome=args.outcome_type,
+                    simulator=simulator,
+                    estimator=embp_model,
+                    seed=j + seedi,
+                    methods=args.methods,
+                )
+                for k, arr in resi.items():
+                    res_arrs.setdefault(k, []).append(arr)
+        else:
+            with mp.Pool(args.ncores) as pool:
+                tmp_reses = [
+                    pool.apply_async(
+                        trial_once_by_simulator_and_estimator,
+                        (
+                            args.outcome_type,
+                            simulator,
+                            embp_model,
+                            j + seedi,
+                            args.methods,
+                        ),
+                    )
+                    for j in range(args.nrepeat)
+                ]
+                for tmp_resi in tqdm(tmp_reses):
+                    resi = tmp_resi.get()
+                    for k, arr in resi.items():
+                        res_arrs.setdefault(k, []).append(arr)
+
+        # 3. collect results
+        res_all = {
+            "true": xr.DataArray(
+                params_ser.values,
+                dims=("params",),
+                coords={"params": params_ser.index.values},
+            ),
+        }
+        for k, arrs in res_arrs.items():
+            if k == "EMBP":
+                res_all[k] = xr.DataArray(
+                    np.stack(arrs, axis=0),
+                    dims=("repeat", "params", "statistic"),
+                    coords={
+                        "params": params_ser.index.values,
+                        "statistic": embp_model.result_columns,
+                    },
+                )
+            else:
+                res_all[k] = xr.DataArray(
+                    np.stack(arrs, axis=0)[:, None, :],
+                    dims=("repeat", "params", "statistic"),
+                    coords={
+                        "params": ["beta_x"],
+                        "statistic": ["estimate", "CI_1", "CI_2"],
+                    },
+                )
+
+        res = xr.Dataset(res_all)
+
+        # 4. print simple summary
+        summary = {}
+        for method in args.methods:
+            summ_i = {}
+            resi = res[method]
+            diff = (
+                resi.sel(params="beta_x", statistic="estimate").values
+                - params_ser["beta_x"]
+            )
+            summ_i["bias"] = diff.mean()
+            summ_i["mse"] = (diff**2).mean()
+            if not args.no_ci:
+                in_ci = (
+                    resi.sel(params="beta_x", statistic="CI_1").values
+                    <= params_ser["beta_x"]
+                ) & (
+                    resi.sel(params="beta_x", statistic="CI_2").values
+                    >= params_ser["beta_x"]
+                )
+                summ_i["cov_rate"] = in_ci.mean()
+            summary[method] = summ_i
+        summary = pd.DataFrame.from_dict(summary)
+        print(summary)
+        summary = xr.DataArray(
+            summary.values,
+            dims=("metric", "method"),
+            coords={
+                "metric": summary.index.values,
+                "method": summary.columns.values,
+            },
+        )
+        res["summary"] = summary
+
+        # 5. save results
+        os.makedirs(args.root, exist_ok=True)
+        ffn = os.path.join(
+            args.root,
+            f"{args.outcome_type if args.name is None else args.name}"
+            f"-{datetime.now():%Y-%m-%d_%H-%M-%S}",
+        )
+        res.to_netcdf(ffn + ".nc")
+        with open(ffn + ".json", "w") as f:
+            json.dump(args.__dict__, f)
 
 
 if __name__ == "__main__":

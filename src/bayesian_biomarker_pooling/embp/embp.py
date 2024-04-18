@@ -76,8 +76,12 @@ class EMBP(BiomarkerPoolBase):
         seed: int | None = 0,
         use_gpu: bool = False,
     ) -> None:
+        """
+        delta2: 1e-5 for continue, 1e-2 for binary
+        max_iter: 500 for continue, 300 for binary
+        """
         assert outcome_type in ["continue", "binary"]
-        assert ci_method in ["sem", "bootstrap"]
+        assert ci_method in ["bootstrap"]
         if use_gpu:
             try:
                 import torch
@@ -97,13 +101,13 @@ class EMBP(BiomarkerPoolBase):
 
         self.outcome_type_ = outcome_type
         self.max_iter_ = (
-            max_iter or {"continue": 1000, "binary": 300}[outcome_type]
+            max_iter or {"continue": 500, "binary": 300}[outcome_type]
         )
         self.max_iter_inner_ = max_iter_inner
         self.delta1_ = delta1
         self.delta1_inner_ = delta1_inner
         self.delta2_ = (
-            delta2 or {"continue": 1e-7, "binary": 1e-2}[outcome_type]
+            delta2 or {"continue": 1e-5, "binary": 1e-2}[outcome_type]
         )
         self.delta2_inner_ = delta2_inner
         self.delta1_var_ = delta1_var
@@ -234,23 +238,23 @@ class EMBP(BiomarkerPoolBase):
             self.params_["CI_2"] = res_ci[1, :]
         else:
             raise NotImplementedError("没有考虑ci_level")
-            params_var_ = self._estimator.estimate_variance()
-            self.params_["variance(log)"] = params_var_
-            self.params_["std(log)"] = np.sqrt(params_var_)
-            self.params_["CI_1"] = (
-                self.params_["estimate"] - 1.96 * self.params_["std(log)"]
-            )
-            self.params_["CI_2"] = (
-                self.params_["estimate"] + 1.96 * self.params_["std(log)"]
-            )
-            is_sigma2 = self.params_.index.map(
-                lambda x: x.startswith("sigma2")
-            )
-            self.params_.loc[is_sigma2, "CI_1"] = np.exp(
-                np.log(self.params_.loc[is_sigma2, "estimate"])
-                - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-            )
-            self.params_.loc[is_sigma2, "CI_2"] = np.exp(
-                np.log(self.params_.loc[is_sigma2, "estimate"])
-                + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-            )
+            # params_var_ = self._estimator.estimate_variance()
+            # self.params_["variance(log)"] = params_var_
+            # self.params_["std(log)"] = np.sqrt(params_var_)
+            # self.params_["CI_1"] = (
+            #     self.params_["estimate"] - 1.96 * self.params_["std(log)"]
+            # )
+            # self.params_["CI_2"] = (
+            #     self.params_["estimate"] + 1.96 * self.params_["std(log)"]
+            # )
+            # is_sigma2 = self.params_.index.map(
+            #     lambda x: x.startswith("sigma2")
+            # )
+            # self.params_.loc[is_sigma2, "CI_1"] = np.exp(
+            #     np.log(self.params_.loc[is_sigma2, "estimate"])
+            #     - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+            # )
+            # self.params_.loc[is_sigma2, "CI_2"] = np.exp(
+            #     np.log(self.params_.loc[is_sigma2, "estimate"])
+            #     + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
+            # )
