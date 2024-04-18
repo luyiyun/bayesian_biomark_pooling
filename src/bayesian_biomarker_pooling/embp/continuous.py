@@ -9,7 +9,6 @@ from .utils import ols
 
 
 def iter_update_beta(
-    batch_mode: bool,
     beta_x: ndarray,
     beta_0: ndarray,
     sigma2_y: ndarray,
@@ -33,37 +32,15 @@ def iter_update_beta(
         [beta_x, beta_0] + ([] if beta_z is None else [beta_z]) + [sigma2_y],
         axis=-1,
     )
-    if batch_mode:
-        beta_all_whole = beta_all.copy()
-        remain_bs_ind = np.arange(beta_x.shape[0])
     for i in range(max_iter):
-        # 如果batch mode，则会监控一个remain_ind，每次只更新其中的内容，
-        # 如果remain_ind数量变成0，则停止更新
-        if batch_mode:
-            beta_all = beta_all[remain_bs_ind]
-            beta_x = beta_x[remain_bs_ind]
-            beta_0 = beta_0[remain_bs_ind]
-            sigma2_y = sigma2_y[remain_bs_ind]
-            xybar_s = xybar_s[remain_bs_ind]
-            xbar_s = xbar_s[remain_bs_ind]
-            vbar_s = vbar_s[remain_bs_ind]
-            ybar_s = ybar_s[remain_bs_ind]
-            yybar_s = yybar_s[remain_bs_ind]
-            if beta_z is not None:
-                beta_z = beta_z[remain_bs_ind]
-            if beta_z is not None:
-                xzbar_s = xzbar_s[remain_bs_ind]
-                zbar_s = zbar_s[remain_bs_ind]
-                zzbar_s = zzbar_s[remain_bs_ind]
-                yzbar_s = yzbar_s[remain_bs_ind]
 
         # 关于z的一些项
         if beta_z is not None:
-            xzd = np.einsum("...ij,...j->...i", xzbar_s, beta_z)
-            zd = np.einsum("...ij,...j->...i", zbar_s, beta_z)
-            yzd = np.einsum("...ij,...j->...i", yzbar_s, beta_z)
-            xzd = np.einsum("...ij,...j->...i", xzbar_s, beta_z)
-            dzzd = np.einusm("...i,...ij,...j->...", beta_z, zzbar_s, beta_z)
+            xzd = np.einsum("ij,j->i", xzbar_s, beta_z)
+            zd = np.einsum("ij,j->i", zbar_s, beta_z)
+            yzd = np.einsum("ij,j->i", yzbar_s, beta_z)
+            xzd = np.einsum("ij,j->i", xzbar_s, beta_z)
+            dzzd = np.einusm("i,ij,j->", beta_z, zzbar_s, beta_z)
         else:
             xzd = yzd = dzzd = zd = xzd = 0.0
 
@@ -116,7 +93,7 @@ def iter_update_beta(
                 ),
                 axis=-2,
             )
-            beta_z_new = np.einsum("...ij,...j->...i", tmp1, tmp2)
+            beta_z_new = np.einsum("ij,j->i", tmp1, tmp2)
 
         # calculate the relative difference
         beta_all_new = np.concatenate(
@@ -129,16 +106,9 @@ def iter_update_beta(
             np.abs(beta_all_new - beta_all) / (np.abs(beta_all) + delta1),
             axis=-1,
         )
-        if batch_mode:
-            logger_embp.info(
-                f"Inner iteration {i+1}: "
-                f"relative difference avg is {rdiff.mean(): .4f}"
-            )
-        else:
-            logger_embp.info(
-                f"Inner iteration {i+1}: "
-                f"relative difference is {rdiff: .4f}"
-            )
+        logger_embp.info(
+            f"Inner iteration {i+1}: " f"relative difference is {rdiff: .4f}"
+        )
 
         # update parameters
         beta_all = beta_all_new
@@ -147,28 +117,14 @@ def iter_update_beta(
         sigma2_y = sigma2_y_new
         if beta_z is not None:
             beta_z = beta_z_new
-        if batch_mode:
-            beta_all_whole[remain_bs_ind] = beta_all_new
 
-        if not batch_mode and (rdiff < delta2):
+        if rdiff < delta2:
             logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
             break
-        elif batch_mode:
-            remain_bs_ind = np.nonzero(rdiff >= delta2)[0]
-            if len(remain_bs_ind) == 0:
-                logger_embp.info(f"All inner iteration stop, stop iter: {i+1}")
-                break
-            else:
-                logger_embp.info(
-                    f"All inner iteration remain {len(remain_bs_ind)} "
-                    "rows to converge"
-                )
 
     else:
         logger_embp.warn("Inner iteration does not converge")
 
-    if batch_mode:
-        return beta_all_whole
     return beta_all
 
 
@@ -178,10 +134,10 @@ class ContinueEM(EM):
 
         self._ybar_s = np.array(
             [self._Y[ind].mean(axis=-1) for ind in self._ind_S]
-        ).T
+        )
         self._yybar_s = np.array(
             [(self._Y[ind] ** 2).mean(axis=-1) for ind in self._ind_S]
-        ).T
+        )
 
         if self._Z is not None:
             self._zzbar_s = []
@@ -189,13 +145,9 @@ class ContinueEM(EM):
             self._yzbar_s = []
             for ind, n_s in zip(self._ind_S, self._n_s):
                 Zs = self._Z[ind]
-                self._zzbar_s.append(
-                    np.einsum("...ij,...ik,...->...jk", Zs, Zs, 1 / n_s)
-                )
+                self._zzbar_s.append(np.einsum("ij,ik->jk", Zs, Zs) / n_s)
                 self._zbar_s.append(Zs.mean(axis=-2))
-                self._yzbar_s.append(
-                    np.einsum("...ij,...i->...j", Zs, self._Y[ind])
-                )
+                self._yzbar_s.append(np.einsum("ij,i->j", Zs, self._Y[ind]))
             self._zzbar_s = np.stack(self._zzbar_s, axis=-3)
             self._zbar_s = np.stack(self._zbar_s, axis=-2)
             self._yzbar_s = np.stack(self._yzbar_s, axis=-2)
@@ -217,29 +169,18 @@ class ContinueEM(EM):
         params = super().init()
 
         beta, sigma2_ys = ols(self._Xo, self._Yo, self._Zo)
-        if self._batch_mode:
-            res = np.concatenate(
-                [
-                    params,
-                    beta[:, [0] + [1] * self._ns],
-                    beta[:, 2:],
-                    np.tile(sigma2_ys[:, None], (1, 4)),
-                ],
-                axis=1,
-            )
-        else:
-            res = np.r_[
-                params,
-                beta[0],
-                [beta[1]] * self._ns,
-                beta[2:],
-                [sigma2_ys] * self._ns,
-            ]
+        res = np.r_[
+            params,
+            beta[0],
+            [beta[1]] * self._ns,
+            beta[2:],
+            [sigma2_ys] * self._ns,
+        ]
         return res
 
     def e_step(self, params: ndarray):
         mu_x, sigma2_x, a, b, sigma2_w, beta_x, beta_0, sigma2_y = (
-            params[..., self._params_ind[k]]
+            params[self._params_ind[k]]
             for k in [
                 "mu_x",
                 "sigma2_x",
@@ -252,9 +193,7 @@ class ContinueEM(EM):
             ]
         )
         beta_z = (
-            params[..., self._params_ind["beta_z"]]
-            if self._Z is not None
-            else 0.0
+            params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
         )
 
         sigma2_denominator = (
@@ -265,9 +204,7 @@ class ContinueEM(EM):
         sigma2 = sigma2_w * sigma2_x * sigma2_y / sigma2_denominator
 
         z_m_part = (
-            0.0
-            if self._Z is None
-            else np.einsum("...ij,...j->...i", self._Zm, beta_z)
+            0.0 if self._Z is None else np.einsum("ij,j->i", self._Zm, beta_z)
         )
         beta_0_m_long = beta_0[self._ind_m_inv]
         sigma2_y_m_long = sigma2_y[self._ind_m_inv]
@@ -296,19 +233,19 @@ class ContinueEM(EM):
                 np.mean(self._W[ind] * self._Xhat[ind], axis=-1)
                 for ind in self._ind_S
             ]
-        ).T
+        )
         vbar_s = np.stack(
             [np.mean(self._Xhat2[ind], axis=-1) for ind in self._ind_S]
-        ).T
+        )
         xbar_s = np.stack(
             [np.mean(self._Xhat[ind], axis=-1) for ind in self._ind_S]
-        ).T
+        )
         xybar_s = np.array(
             [
                 np.mean(self._Xhat[ind] * self._Y[ind], axis=-1)
                 for ind in self._ind_S
             ]
-        ).T
+        )
 
         if self._Z is not None:
             # xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
@@ -336,30 +273,100 @@ class ContinueEM(EM):
             - 2 * (a * self._wbar_s + b * wxbar_s - a * b * xbar_s)
         )
         # 迭代更新beta值
-        beta_all = iter_update_beta(
-            batch_mode=self._batch_mode,
-            beta_x=params[..., self._params_ind["beta_x"]],
-            beta_0=params[..., self._params_ind["beta_0"]],
-            sigma2_y=params[..., self._params_ind["sigma2_y"]],
-            beta_z=(
-                None
-                if self._Z is None
-                else params[..., self._params_ind["beta_z"]]
-            ),
-            xzbar_s=xzbar_s,
-            zbar_s=self._zbar_s,
-            zzbar_s=self._zzbar_s,
-            yzbar_s=self._yzbar_s,
-            xybar_s=xybar_s,
-            xbar_s=xbar_s,
-            vbar_s=vbar_s,
-            ybar_s=self._ybar_s,
-            yybar_s=self._yybar_s,
-            n_s=self._n_s,
-            max_iter=self._max_iter_inner,
-            delta1=self._delta1_inner,
-            delta2=self._delta2_inner,
-        )
+        beta_all = params[(2 + 3 * self._ns) :]
+        for i in range(self._max_iter_inner):
+            beta_all_new = beta_all.copy()
+
+            # 关于z的一些项
+            if self._Z is None:
+                xzd = yzd = dzzd = zd = xzd = 0.0
+            else:
+                beta_z = beta_all_new[-(self._ns + self._nz) : -self._ns]
+                xzd = np.einsum("ij,j->i", xzbar_s, beta_z)
+                zd = np.einsum("ij,j->i", self._zbar_s, beta_z)
+                yzd = np.einsum("ij,j->i", self._yzbar_s, beta_z)
+                xzd = np.einsum("ij,j->i", xzbar_s, beta_z)
+                dzzd = np.einusm("i,ij,j->", beta_z, self._zzbar_s, beta_z)
+
+            # beta_x
+            # 为了避免zero variance的问题，需要使用一些通分技巧
+            sigma2_y = beta_all_new[-self._ns :]
+            sigma2_y_prod = np.stack(
+                [
+                    np.prod(np.delete(sigma2_y, i, axis=-1), axis=-1)
+                    for i in range(self._ns)
+                ]
+            )
+            beta_x_new = beta_all_new[0] = (
+                self._n_s
+                * (xybar_s - beta_all_new[1 : (1 + self._ns)] * xbar_s - xzd)
+                * sigma2_y_prod
+            ).sum(axis=-1, keepdims=True) / (
+                self._n_s * vbar_s * sigma2_y_prod
+            ).sum(
+                axis=-1, keepdims=True
+            )
+            # beta_0
+            beta_0_new = beta_all_new[1 : (1 + self._ns)] = (
+                self._ybar_s - zd - beta_x_new * xbar_s
+            )
+            # sigma2_y
+            sigma2_y_new = beta_all_new[-self._ns :] = (
+                self._yybar_s
+                + beta_0_new**2
+                + beta_x_new**2 * vbar_s
+                + dzzd
+                - 2 * beta_0_new * self._ybar_s
+                - 2 * beta_x_new * xybar_s
+                - 2 * yzd
+                + 2 * beta_0_new * beta_x_new * xbar_s
+                + 2 * beta_0_new * zd
+                + 2 * beta_x_new * xzd
+            )
+            # beta_z
+            if self._Z is not None:
+                # TODO: sigma2_y_new =0 可能会导致问题
+                tmp1 = np.linalg.inv(
+                    np.sum(
+                        self._n_s[..., None, None]  # (nbs,)ns
+                        / sigma2_y_new[..., None, None]  # (nbs,)ns
+                        * self._zzbar_s,  # (nbs,)ns,nz,nz
+                        axis=-3,
+                    )
+                )
+                tmp2 = np.sum(
+                    (self._n_s / sigma2_y_new)[..., None]  # (nbs,)ns
+                    * (
+                        self._yzbar_s  # (nbs,)ns,nz
+                        - beta_0_new[..., None] * self._zbar_s  # (nbs,)ns,nz
+                        - beta_x_new[..., None] * xzbar_s  # (nbs,)1
+                    ),
+                    axis=-2,
+                )
+                beta_all_new[-(self._ns + self._nz) : -self._ns] = np.einsum(
+                    "ij,j->i", tmp1, tmp2
+                )
+
+            # calculate the relative difference
+            rdiff = np.max(
+                np.abs(beta_all_new - beta_all)
+                / (np.abs(beta_all) + self._delta1_inner),
+                axis=-1,
+            )
+            logger_embp.info(
+                f"Inner iteration {i+1}: "
+                f"relative difference is {rdiff: .4f}"
+            )
+
+            # update parameters
+            beta_all = beta_all_new
+
+            if rdiff < self._delta2_inner:
+                logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
+                break
+
+        else:
+            logger_embp.warn("Inner iteration does not converge")
 
         return np.concatenate(
             [

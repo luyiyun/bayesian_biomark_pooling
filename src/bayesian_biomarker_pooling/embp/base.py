@@ -51,10 +51,7 @@ class EM:
         assert X.shape == S.shape == W.shape == Y.shape
         if Z is not None:
             assert X.shape == Z.shape[:-1]
-        assert X.ndim <= 2
-
-        self._batch_mode = X.ndim > 1
-        self._n_batch = X.shape[0] if self._batch_mode else 1
+        assert X.ndim == 1
 
         self._X = X
         self._S = S
@@ -80,41 +77,16 @@ class EM:
         else:
             self._Zo = self._Zm = None
 
-        # NOTE: 默认batch mode下，也不会出现不一致的情况。
-        if self._batch_mode:
-            st_seq, ind_seq = [], []
-            for i in range(self._S.shape[0]):
-                uniq_i, ind_inv_i = np.unique(self._S[i], return_inverse=True)
-                st_seq.append(uniq_i)
-                ind_seq.append(ind_inv_i)
-            self._studies, self._ind_inv = np.stack(st_seq), np.stack(ind_seq)
-            self._ind_m_inv = (
-                np.arange(self._is_m.shape[0])[:, None],
-                np.stack(
-                    [
-                        self._ind_inv[i, self._is_m[i]]
-                        for i in range(self._is_m.shape[0])
-                    ],
-                    axis=0,
-                ),
-            )
-        else:
-            self._studies, self._ind_inv = np.unique(
-                self._S, return_inverse=True
-            )
-            self._ind_m_inv = self._ind_inv[self._is_m]
+        self._studies, self._ind_inv = np.unique(self._S, return_inverse=True)
+        self._ind_m_inv = self._ind_inv[self._is_m]
 
         # the transpose of 1-d array is still 1-d array
-        self._ind_S = [
-            batch_nonzero((self._S.T == s).T) for s in self._studies.T
-        ]
+        self._ind_S = [np.nonzero(self._S == s)[0] for s in self._studies]
         self._ind_Sm = [
-            batch_nonzero((self._S.T == s).T & self._is_m)
-            for s in self._studies.T
+            np.nonzero((self._S.T == s) & self._is_m)[0] for s in self._studies
         ]
         self._ind_So = [
-            batch_nonzero((self._S.T == s).T & self._is_o)
-            for s in self._studies.T
+            np.nonzero((self._S.T == s) & self._is_o)[0] for s in self._studies
         ]
 
         self._n = self._Y.shape[-1]
@@ -122,19 +94,14 @@ class EM:
         self._nz = 0 if self._Z is None else self._Z.shape[-1]
         self._n_o = self._is_o.sum(axis=-1)
         self._n_m = self._is_m.sum(axis=-1)
-        self._n_s = np.array(
-            [
-                indi[1].shape[-1] if self._batch_mode else indi.shape[-1]
-                for indi in self._ind_S
-            ]
-        )
+        self._n_s = np.array([indi.shape[-1] for indi in self._ind_S])
 
         self._wbar_s = np.stack(
             [np.mean(self._W[ind], axis=-1) for ind in self._ind_S]
-        ).T  # 如果是1维向量，转置对其没有改变
+        )
         self._wwbar_s = np.stack(
             [np.mean(self._W[ind] ** 2, axis=-1) for ind in self._ind_S]
-        ).T
+        )
 
         self._sigma_ind = np.array(
             [1]
@@ -169,14 +136,14 @@ class EM:
         a, b, sigma2_w = [], [], []
         for ind_so_i in self._ind_So:
             if len(ind_so_i) == 0:
-                a.append(np.zeros(self._n_batch))
-                b.append(np.zeros(self._n_batch))
-                sigma2_w.append(np.ones(self._n_batch))
+                a.append(0)
+                b.append(0)
+                sigma2_w.append(1)
                 continue
 
             abi, sigma2_ws_i = ols(self._X[ind_so_i], self._W[ind_so_i])
-            a.append(abi[..., 1])
-            b.append(abi[..., 0])
+            a.append(abi[1])
+            b.append(abi[0])
             sigma2_w.append(sigma2_ws_i)
         a, b, sigma2_w = (
             np.stack(a, axis=-1),

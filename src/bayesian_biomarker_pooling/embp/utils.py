@@ -3,6 +3,7 @@ from typing import Tuple
 import numpy as np
 from numpy import ndarray
 from scipy.special import expit
+from scipy.linalg import lstsq
 
 from ..logger import logger_embp
 
@@ -22,13 +23,15 @@ def ols(
     X_des = np.stack([X, np.ones_like(X)], axis=-1)
     if Z is not None:
         X_des = np.concatenate([X_des, Z], axis=-1)
-    x2 = np.einsum("...ij,...ik->...jk", X_des, X_des)
-    x2_inv = np.linalg.inv(x2)
-    hat_mat = np.einsum("...ij,...kj->...ik", x2_inv, X_des)
-    beta = np.einsum("...ik,...k->...i", hat_mat, Y)
-    pred = np.einsum("...ij,...j->...i", X_des, beta)
-    sigma2 = np.mean((Y - pred) ** 2, axis=-1)
-    return beta, sigma2
+
+    beta, resid, _, _ = lstsq(X_des, Y)
+    # x2 = np.einsum("ij,ik->jk", X_des, X_des)
+    # x2_inv = np.linalg.inv(x2)
+    # hat_mat = np.einsum("ij,kj->ik", x2_inv, X_des)
+    # beta = np.einsum("ik,k->i", hat_mat, Y)
+    # pred = np.einsum("ij,j->i", X_des, beta)
+    # sigma2 = np.mean((Y - pred) ** 2, axis=-1)
+    return beta, resid
 
 
 def logistic(
@@ -65,4 +68,3 @@ def logistic(
         )
 
     return beta_
-
