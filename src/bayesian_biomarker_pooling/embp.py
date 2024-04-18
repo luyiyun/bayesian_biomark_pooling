@@ -8,7 +8,7 @@ from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
 from scipy.linalg import block_diag
 
-from scipy.optimize import minimize, minimize_scalar
+from scipy.optimize import minimize_scalar
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 
@@ -333,7 +333,7 @@ def newton_raphson_beta(
             p_m = log_expit((2 * Ym - 1) * (Xm_des @ new_beta))  # N x nm
             return -(p_o.sum() + (p_m * wIS).sum())
 
-        res = minimize_scalar(obj, bounds=(0., 1.))
+        res = minimize_scalar(obj, bounds=(0.0, 1.0))
         if not res.success:
             logger_embp.warning(
                 "M step optimiztion lr searching fail to converge, "
@@ -1132,7 +1132,9 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
         hess_inv = (sigma2_w * sigma2_x)[self._ind_m_inv] / (
             p2_mult_m_long * p * (1 - p) + x_mult_m_long
         )
-        norm_lap = norm(loc=self._Xm, scale=np.sqrt(hess_inv) + EPS)  # TODO: 这个EPS可能不是必须的
+        norm_lap = norm(
+            loc=self._Xm, scale=np.sqrt(hess_inv) + EPS
+        )  # TODO: 这个EPS可能不是必须的
 
         # 进行IS采样
         self._XIS = norm_lap.rvs(
@@ -1232,55 +1234,34 @@ def bootstrap_estimator(
     Y_type: Literal["continue", "binary"] = False,
     n_repeat: int = 200,
     seed: int | None | Generator = None,
+    pbar: bool = True,
 ) -> pd.DataFrame:
     assert hasattr(
         estimator, "params_"
     ), "please run regular EM iteration firstly!"
 
     seed = np.random.default_rng(seed)
+    ind_bootstrap = seed.choice(
+        Y.shape[0], (n_repeat, Y.shape[0]), replace=True
+    )
 
-    Svals = np.unique(S)
-    is_m = pd.isnull(X)
-    not_m = ~is_m
-    if Y_type == "binary":
-        Yvals = np.unique(Y)
+    estimator._pbar = False
 
     init_params = estimator.params_.copy()
-    ind_bootstrap = []
-    for si in Svals:
-        for is_i in [is_m, not_m]:
-            if Y_type == "continue":
-                ind = np.nonzero((S == si) & is_i)[0]
-                if len(ind) == 0:
-                    continue
-                ind_choice = seed.choice(
-                    ind, (n_repeat, len(ind)), replace=True
-                )
-                ind_bootstrap.append(ind_choice)
-            elif Y_type == "binary":
-                for yi in Yvals:
-                    ind = np.nonzero((S == si) & (Y == yi) & is_i)[0]
-                    if len(ind) == 0:
-                        continue
-                    ind_choice = seed.choice(
-                        ind, (n_repeat, len(ind)), replace=True
-                    )
-                    ind_bootstrap.append(ind_choice)
-            else:
-                raise NotImplementedError
-    ind_bootstrap = np.concatenate(ind_bootstrap, axis=1)  # nbs x N
-    X_bs, Y_bs, W_bs, S_bs, Z_bs = (
-        X[ind_bootstrap],  # nbs x N
-        Y[ind_bootstrap],
-        W[ind_bootstrap],
-        S[ind_bootstrap],
-        None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
-    )
-    estimator.register_data(X_bs, S_bs, W_bs, Y_bs, Z_bs)
-    # 使用EM估计值作为初始值
-    estimator.run(init_params=np.tile(init_params[None, :], (n_repeat, 1)))
+    params_bs = []
+    for i in tqdm(range(n_repeat), disable=not pbar):
+        ind_bs = ind_bootstrap[i]
+        estimator.register_data(
+            X[ind_bs],
+            S[ind_bs],
+            W[ind_bs],
+            Y[ind_bs],
+            None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
+        )
+        estimator.run(init_params=init_params)
+        params_bs.append(estimator.params_)
 
-    return estimator.params_
+    return np.stack(params_bs, axis=0)
 
 
 class EMBP(BiomarkerPoolBase):
@@ -1298,15 +1279,16 @@ class EMBP(BiomarkerPoolBase):
         min_nIS: int = 100,
         max_nIS: int = 5000,
         lr: float = 1.0,
-        variance_estimate: bool = False,
-        variance_estimate_method: Literal["sem", "bootstrap"] = "sem",
+        ci: bool = False,
+        ci_method: Literal["sem", "bootstrap"] = "sem",
+        ci_level: float = 0.95,
         n_bootstrap: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
         use_gpu: bool = False,
     ) -> None:
         assert outcome_type in ["continue", "binary"]
-        assert variance_estimate_method in ["sem", "bootstrap"]
+        assert ci_method in ["sem", "bootstrap"]
         if use_gpu:
             try:
                 import torch
@@ -1317,7 +1299,7 @@ class EMBP(BiomarkerPoolBase):
                 )
         if use_gpu and outcome_type == "continue":
             raise NotImplementedError
-        if outcome_type == "binary" and variance_estimate:
+        if outcome_type == "binary" and ci:
             raise NotImplementedError
         # if outcome_type == "binary" and variance_estimate_method == "sem":
         #     raise NotImplementedError(
@@ -1341,8 +1323,9 @@ class EMBP(BiomarkerPoolBase):
         self.max_nIS_ = max_nIS
         self.lr_ = lr
         self.pbar_ = pbar
-        self.var_est_ = variance_estimate
-        self.var_est_method_ = variance_estimate_method
+        self.ci_ = ci
+        self.ci_method_ = ci_method
+        self.ci_level_ = ci_level
         self.n_bootstrap_ = n_bootstrap
         self.use_gpu_ = use_gpu
         self.seed_ = np.random.default_rng(seed)
@@ -1352,9 +1335,9 @@ class EMBP(BiomarkerPoolBase):
 
     @property
     def result_columns(self):
-        if not self.var_est_:
+        if not self.ci_:
             return ["estimate"]
-        if self.var_est_method_ == "bootstrap":
+        if self.ci_method_ == "bootstrap":
             return ["estimate", "CI_1", "CI_2"]
         return ["estimate", "variance(log)", "std(log)", "CI_1", "CI_2"]
 
@@ -1430,10 +1413,13 @@ class EMBP(BiomarkerPoolBase):
             self._estimator.params_hist_, columns=params_names
         )
 
-        if not self.var_est_:
+        if not self.ci_:
             return
 
-        if self.var_est_method_ == "bootstrap":
+        quan1 = (1 - self.ci_level_) / 2
+        quan2 = 1 - quan1
+
+        if self.ci_method_ == "bootstrap":
             # 使用boostrap方法
             if self.pbar_:
                 print("Bootstrap: ")
@@ -1448,15 +1434,17 @@ class EMBP(BiomarkerPoolBase):
                 Y_type=self.outcome_type_,
                 n_repeat=self.n_bootstrap_,
                 seed=self.seed_,
+                pbar=self.pbar_,
             )
             res_ci = np.quantile(
                 res_bootstrap,
-                q=[0.025, 0.975],
+                q=[quan1, quan2],
                 axis=0,
             )
             self.params_["CI_1"] = res_ci[0, :]
             self.params_["CI_2"] = res_ci[1, :]
         else:
+            raise NotImplementedError("没有考虑ci_level")
             params_var_ = self._estimator.estimate_variance()
             self.params_["variance(log)"] = params_var_
             self.params_["std(log)"] = np.sqrt(params_var_)

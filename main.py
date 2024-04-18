@@ -1,7 +1,6 @@
 import logging
 import os
 import multiprocessing as mp
-import itertools
 import re
 from datetime import datetime
 from typing import Literal, Sequence
@@ -40,8 +39,8 @@ def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
     df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="continue",
-        variance_estimate=ci,
-        variance_estimate_method=ve_method,
+        ci=ci,
+        ci_method=ve_method,
         pbar=True,
         seed=seed,
     )
@@ -84,7 +83,7 @@ def temp_test_binary(
     df = simulator.simulate(seed)
     model = EMBP(
         outcome_type="binary",
-        variance_estimate=ci,
+        ci=ci,
         # variance_estimate_method="bootstrap",
         # max_iter=300,
         pbar=True,
@@ -227,8 +226,8 @@ def trial(
     if "EMBP" in methods:
         embp_model = EMBP(
             outcome_type=type_outcome,
-            variance_estimate=ci,
-            variance_estimate_method=ci_method,
+            ci=ci,
+            ci_method=ci_method,
             pbar=False,
             max_iter=max_iter,
             seed=seed,
@@ -365,42 +364,42 @@ def main():
 
     type_outcome = "binary"
 
-    # temp_test_continue(ci=True, ve_method="bootstrap")
+    temp_test_continue(ci=True, ve_method="bootstrap")
     # temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
-    for i, (ns, rx, betax) in enumerate(
-        itertools.product(
-            [100, 150, 200, 250], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
-        )
-    ):
-        print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
-        # NOTE: 特别是对于binary outcome，要非常小心的去控制模拟数据的参数，
-        # 不然容易得到比较奇怪的数据(标签的比例)，模型无法得到有效的结果。
-        trial(
-            root="./results/embp",
-            # methods=["EMBP"],
-            type_outcome=type_outcome,
-            repeat=1000,
-            ci=False,  # False for binary, True for continue
-            # ci_method="bootstrap",
-            # n_bootstrap=200,
-            n_cores=20,
-            beta_x=betax,
-            # beta_0=0.,  # 对于binary，beta_0会影响y的比例
-            beta_0=(
-                (-0.5, -0.25, 0.25, 0.5)
-                if type_outcome == "continue"
-                else None
-            ),
-            prevalence=0.5 if type_outcome == "binary" else None,
-            # prevalence=(
-            #     (0.3, 0.4, 0.6, 0.7) if type_outcome == "binary" else None
-            # ),
-            n_sample_per_studies=ns,
-            x_ratio=rx,
-            seed=i,
-            max_iter=None,  # 300 for binary, 1000 for continue
-            # beta_z=np.random.randn(3),
-        )
+    # for i, (ns, rx, betax) in enumerate(
+    #     itertools.product(
+    #         [100, 150, 200, 250], [0.1, 0.15, 0.2], [0.0, 1.0, 2.0]
+    #     )
+    # ):
+    #     print(f"nSamplePerStudy={ns}, " f"RatioXKnow={rx}, " f"beta_x={betax}")
+    #     # NOTE: 特别是对于binary outcome，要非常小心的去控制模拟数据的参数，
+    #     # 不然容易得到比较奇怪的数据(标签的比例)，模型无法得到有效的结果。
+    #     trial(
+    #         root="./results/embp",
+    #         # methods=["EMBP"],
+    #         type_outcome=type_outcome,
+    #         repeat=1000,
+    #         ci=False,  # False for binary, True for continue
+    #         # ci_method="bootstrap",
+    #         # n_bootstrap=200,
+    #         n_cores=20,
+    #         beta_x=betax,
+    #         # beta_0=0.,  # 对于binary，beta_0会影响y的比例
+    #         beta_0=(
+    #             (-0.5, -0.25, 0.25, 0.5)
+    #             if type_outcome == "continue"
+    #             else None
+    #         ),
+    #         prevalence=0.5 if type_outcome == "binary" else None,
+    #         # prevalence=(
+    #         #     (0.3, 0.4, 0.6, 0.7) if type_outcome == "binary" else None
+    #         # ),
+    #         n_sample_per_studies=ns,
+    #         x_ratio=rx,
+    #         seed=i,
+    #         max_iter=None,  # 300 for binary, 1000 for continue
+    #         # beta_z=np.random.randn(3),
+    #     )
 
 
 if __name__ == "__main__":
