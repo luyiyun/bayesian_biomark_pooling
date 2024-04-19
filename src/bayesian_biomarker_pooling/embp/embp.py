@@ -10,7 +10,8 @@ from numpy.random import Generator
 from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
-from .binary import BinaryEM
+# from .binary import BinaryEM
+from .binary_lap import LapBinaryEM
 
 
 def bootstrap_estimator(
@@ -65,11 +66,11 @@ class EMBP(BiomarkerPoolBase):
         delta2_inner: float = 1e-7,
         delta1_var: float = 1e-1,
         delta2_var: float = 1e-3,
-        min_nIS: int = 100,
-        max_nIS: int = 5000,
-        lr: float = 1.0,
+        # min_nIS: int = 100,
+        # max_nIS: int = 5000,
+        # lr: float = 1.0,
         ci: bool = False,
-        ci_method: Literal["sem", "bootstrap"] = "sem",
+        ci_method: Literal["sem", "bootstrap"] = "bootstrap",
         ci_level: float = 0.95,
         n_bootstrap: int = 200,
         pbar: bool = True,
@@ -92,8 +93,8 @@ class EMBP(BiomarkerPoolBase):
                 )
         if use_gpu and outcome_type == "continue":
             raise NotImplementedError
-        if outcome_type == "binary" and ci:
-            raise NotImplementedError
+        # if outcome_type == "binary" and ci:
+        #     raise NotImplementedError
         # if outcome_type == "binary" and variance_estimate_method == "sem":
         #     raise NotImplementedError(
         #         "use bootstrap for outcome_type = binary"
@@ -107,14 +108,14 @@ class EMBP(BiomarkerPoolBase):
         self.delta1_ = delta1
         self.delta1_inner_ = delta1_inner
         self.delta2_ = (
-            delta2 or {"continue": 1e-5, "binary": 1e-2}[outcome_type]
+            delta2 or {"continue": 1e-5, "binary": 1e-3}[outcome_type]
         )
         self.delta2_inner_ = delta2_inner
         self.delta1_var_ = delta1_var
         self.delta2_var_ = delta2_var
-        self.min_nIS_ = min_nIS
-        self.max_nIS_ = max_nIS
-        self.lr_ = lr
+        # self.min_nIS_ = min_nIS
+        # self.max_nIS_ = max_nIS
+        # self.lr_ = lr
         self.pbar_ = pbar
         self.ci_ = ci
         self.ci_method_ = ci_method
@@ -175,7 +176,7 @@ class EMBP(BiomarkerPoolBase):
                     device="cuda:0",
                 )
             else:
-                self._estimator = BinaryEM(
+                self._estimator = LapBinaryEM(
                     max_iter=self.max_iter_,
                     max_iter_inner=self.max_iter_inner_,
                     delta1=self.delta1_,
@@ -185,10 +186,7 @@ class EMBP(BiomarkerPoolBase):
                     delta2_inner=self.delta2_inner_,
                     delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
-                    lr=self.lr_,
                     random_seed=self.seed_,
-                    min_nIS=self.min_nIS_,
-                    max_nIS=self.max_nIS_,
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()

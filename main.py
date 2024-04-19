@@ -208,9 +208,10 @@ def main():
         default=(-0.5, -0.25, 0.25, 0.5),
         type=float,
         nargs=4,
+        help="如果设置了prevalence并且outcome_type=binary，则其失效",
     )
     parser.add_argument("-bz", "--beta_z", default=None, type=float, nargs="*")
-    parser.add_argument("-pr", "--prevalence", default=0.5, type=float)
+    parser.add_argument("-pr", "--prevalence", default=None, type=float)
 
     parser.add_argument(
         "-m",
@@ -228,6 +229,7 @@ def main():
         default="warn",
         choices=["error", "warn", "info", "debug"],
     )
+    parser.add_argument("--pbar", action="store_true")
     parser.add_argument("--root", default="./results/embp/")
     parser.add_argument("--name", default=None)
 
@@ -254,8 +256,10 @@ def main():
             handler.setLevel(log_level)
 
     if args.test:
-        temp_test_continue(ci=True, ve_method="bootstrap")
-        temp_test_binary(ci=False, seed=1, nsample=50, n_knowX=5, beta_x=0)
+        if args.outcome_type == "continue":
+            temp_test_continue(ci=True, ve_method="bootstrap")
+        elif args.outcome_type == "binary":
+            temp_test_binary(ci=True, seed=1, nsample=50, n_knowX=5, beta_x=0)
         return
 
     # 模拟实验：
@@ -268,6 +272,10 @@ def main():
             args.nsample_per_studies, args.ratio_x_per_studies, args.beta_x
         )
     ):
+        print(
+            f"nsample per studies: {ns}, "
+            f"ratio of observed x: {rx:.2f}, true beta x: {bx:.2f}"
+        )
         seedi = args.seed + i
         nx = int(rx * ns)
 
@@ -276,7 +284,12 @@ def main():
             beta_x=bx,
             sigma2_y=[0.5, 0.75, 1.0, 1.25],
             sigma2_e=[0.5, 0.75, 1.0, 1.25],
-            beta_0=args.beta_0,
+            beta_0=(
+                None
+                if args.outcome_type == "binary"
+                and args.prevalence is not None
+                else args.beta_0
+            ),
             prevalence=args.prevalence,
             n_sample_per_studies=ns,
             n_knowX_per_studies=nx,
@@ -289,7 +302,7 @@ def main():
                 outcome_type=args.outcome_type,
                 ci=not args.no_ci,
                 ci_method=args.ci_method,
-                pbar=False,
+                pbar=args.pbar,
                 max_iter=args.max_iter,
                 seed=seedi,
                 n_bootstrap=args.n_bootstrap,
