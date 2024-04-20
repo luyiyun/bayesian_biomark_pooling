@@ -79,6 +79,7 @@ class EM:
 
         self._studies, self._ind_inv = np.unique(self._S, return_inverse=True)
         self._ind_m_inv = self._ind_inv[self._is_m]
+        # self._ind_o_inv = self._ind_inv[self._is_o]
 
         # the transpose of 1-d array is still 1-d array
         self._ind_S = [np.nonzero(self._S == s)[0] for s in self._studies]

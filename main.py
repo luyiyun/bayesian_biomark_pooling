@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Literal, Sequence
 from argparse import ArgumentParser
 from itertools import product
+# from copy import deepcopy
 
 import numpy as np
 import pandas as pd
@@ -152,7 +153,7 @@ def method_naive(
 def trial_once_by_simulator_and_estimator(
     type_outcome: Literal["continue", "binary"],
     simulator: Simulator,
-    estimator: EMBP | None = None,
+    estimator: EMBP | dict | None = None,
     seed: int | None = None,
     methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
         "xonly",
@@ -177,6 +178,10 @@ def trial_once_by_simulator_and_estimator(
             res = method_naive(W, Y, Z, type_outcome)
         elif methodi == "EMBP":
             # 3. run model
+            if estimator is None:
+                continue
+            elif isinstance(estimator, dict):
+                estimator = EMBP(**estimator)
             estimator.fit(X, df["S"].values, W, Y, Z)
             res = estimator.params_.values
         res_all[methodi] = res
@@ -240,6 +245,7 @@ def main():
     parser.add_argument("--max_iter", default=None, type=int)
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--n_bootstrap", default=200, type=int)
+    parser.add_argument("--gem", action="store_true")
 
     args = parser.parse_args()
 
@@ -257,9 +263,11 @@ def main():
 
     if args.test:
         if args.outcome_type == "continue":
-            temp_test_continue(ci=True, ve_method="bootstrap")
+            temp_test_continue(ci=not args.no_ci, ve_method="bootstrap")
         elif args.outcome_type == "binary":
-            temp_test_binary(ci=True, seed=1, nsample=50, n_knowX=5, beta_x=0)
+            temp_test_binary(
+                ci=not args.no_ci, seed=1, nsample=100, n_knowX=10, beta_x=0
+            )
         return
 
     # 模拟实验：
@@ -298,6 +306,16 @@ def main():
         params_ser = simulator.parameters_series
 
         if "EMBP" in args.methods:
+            # embp_kwargs = dict(
+            #     outcome_type=args.outcome_type,
+            #     ci=not args.no_ci,
+            #     ci_method=args.ci_method,
+            #     pbar=args.pbar,
+            #     max_iter=args.max_iter,
+            #     seed=seedi,
+            #     n_bootstrap=args.n_bootstrap,
+            #     gem=args.gem
+            # )
             embp_model = EMBP(
                 outcome_type=args.outcome_type,
                 ci=not args.no_ci,
@@ -306,6 +324,7 @@ def main():
                 max_iter=args.max_iter,
                 seed=seedi,
                 n_bootstrap=args.n_bootstrap,
+                gem=args.gem
             )
         else:
             embp_model = None

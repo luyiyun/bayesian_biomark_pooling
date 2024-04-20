@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.special import expit
-from scipy.stats import norm
+from scipy.special import expit, ndtri
+
 # from scipy.optimize import minimize_scalar
 from numpy import ndarray
 from numpy.random import Generator
@@ -27,7 +27,8 @@ class LapBinaryEM(EM):
         delta2_var: float = 1e-2,
         pbar: bool = True,
         random_seed: int | None | Generator = None,
-        K: int = 2000,
+        K: int = 1000,
+        gem: bool = True
     ) -> None:
         super().__init__(
             max_iter=max_iter,
@@ -41,7 +42,10 @@ class LapBinaryEM(EM):
             pbar=pbar,
             random_seed=random_seed,
         )
+        self._gem = gem
         self._K = K  # quasi-monte-carlo
+        self._unif_K = (np.arange(1, self._K) / self._K)[:, None]
+        self._ppf_sn = ndtri(self._unif_K).squeeze()
 
     def prepare(self):
         super().prepare()
@@ -69,8 +73,6 @@ class LapBinaryEM(EM):
             }
         )
         self._nparams = 3 + 4 * self._ns + self._nz
-
-        self._unif_K = (np.arange(1, self._K) / self._K)[:, None]
 
     def init(self) -> ndarray:
         """初始化权重"""
@@ -153,7 +155,7 @@ class LapBinaryEM(EM):
         self._Vm = (sigma2_w * sigma2_x)[self._ind_m_inv] / (
             p2_mult_m_long * p * (1 - p) + x_mult_m_long
         )
-        self._norm_lap = norm(loc=self._Xm, scale=np.sqrt(self._Vm))  # + EPS
+        # self._norm_lap = norm(loc=self._Xm, scale=np.sqrt(self._Vm))  # + EPS
 
         # 计算Xhat和Xhat2
         self._Xhat[self._is_m] = self._Xm
@@ -191,49 +193,44 @@ class LapBinaryEM(EM):
             beta_all,
         ]
 
-    def update_beta_all(
-        self, beta_all: np.ndarray, K: int = 1000
-    ) -> np.ndarray:
+    def update_beta_all(self, beta_all: np.ndarray) -> np.ndarray:
         # NOTE: 我自己的实现更快
-        h = self._norm_lap.ppf(self._unif_K)
+        # 使用这个替代ppf函数，更快
+        h = self._ppf_sn[:, None] * np.sqrt(self._Vm) + self._Xm
         for i in range(self._max_iter_inner):
             # 计算grad_o
             p_o = expit(self._Xo_des @ beta_all)  # no
-            grad_o = self._Xo_des.T @ p_o
+            grad = self._Xo_des.T @ p_o
             # 计算grad_m
-            sigma = expit(
-                beta_all[0] * h
-                + beta_all[1 : (self._ns + 1)][self._ind_m_inv]
-                + (
-                    self._Zm @ beta_all[(self._ns + 1) :]
-                    if self._Z is not None
-                    else 0
-                )
-            )
+            sigma = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
             Esig = sigma.mean(axis=0)
             Esigx = (sigma * h).mean(axis=0)
             grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
             grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
-            grad_m = np.r_[grad_m_betax, grad_m_other]
-            # 计算grad
-            grad = grad_o + grad_m
+            grad[0] += grad_m_betax  # inplace更快
+            grad[1:] += grad_m_other
 
             # 计算hess_o
-            hess_o = np.einsum(
+            hess = np.einsum(
                 "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
             )
             # 计算hess_m
             sigma2 = sigma * (1 - sigma)
             hess_m_00 = (sigma2 * h**2).mean(axis=0).sum()
-            hess_m_01 = (self._Cm_des.T @ (sigma2 * h).mean(axis=0))[None, :]
+            hess_m_01 = self._Cm_des.T @ (sigma2 * h).mean(axis=0)
             hess_m_11 = np.einsum(
                 "ij,i,ik", self._Cm_des, sigma2.mean(axis=0), self._Cm_des
             )
-            hess_m = np.block(
-                [[hess_m_00, hess_m_01], [hess_m_01.T, hess_m_11]]
+            hess_m = np.block(  # 这种比inplace替换([]+=)更快
+                [
+                    [hess_m_00, hess_m_01[None, :]],
+                    [hess_m_01[:, None], hess_m_11],
+                ]
             )
-            hess = hess_o + hess_m
-            beta_delta = np.linalg.solve(hess, grad)
+            hess = hess + hess_m
+
+            beta_delta = np.linalg.solve(hess, grad)  # scipy也有，更慢但是更稳定
+
             # try:  # TODO:
             #     beta_delta = np.linalg.solve(H, grad)
             # except np.linalg.LinAlgError as e:
@@ -262,6 +259,8 @@ class LapBinaryEM(EM):
             #         f"msg: {res.message}"
             #     )
             # beta_delta *= res.x
+            if self._gem:
+                return beta_all - beta_delta
             rdiff = np.max(
                 np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
             )

@@ -66,9 +66,6 @@ class EMBP(BiomarkerPoolBase):
         delta2_inner: float = 1e-7,
         delta1_var: float = 1e-1,
         delta2_var: float = 1e-3,
-        # min_nIS: int = 100,
-        # max_nIS: int = 5000,
-        # lr: float = 1.0,
         ci: bool = False,
         ci_method: Literal["sem", "bootstrap"] = "bootstrap",
         ci_level: float = 0.95,
@@ -76,6 +73,8 @@ class EMBP(BiomarkerPoolBase):
         pbar: bool = True,
         seed: int | None = 0,
         use_gpu: bool = False,
+        quasi_mc_K: int = 1000,
+        gem: bool = False,
     ) -> None:
         """
         delta2: 1e-5 for continue, 1e-2 for binary
@@ -123,6 +122,9 @@ class EMBP(BiomarkerPoolBase):
         self.n_bootstrap_ = n_bootstrap
         self.use_gpu_ = use_gpu
         self.seed_ = np.random.default_rng(seed)
+        self.gem_ = gem
+
+        self.quasi_mc_K_ = quasi_mc_K
 
         if use_gpu and seed is not None:
             torch.random.manual_seed(seed)
@@ -187,6 +189,8 @@ class EMBP(BiomarkerPoolBase):
                     delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
                     random_seed=self.seed_,
+                    K=self.quasi_mc_K_,
+                    gem=self.gem_
                 )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
