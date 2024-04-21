@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Literal, Sequence
 from argparse import ArgumentParser
 from itertools import product
-# from copy import deepcopy
+from copy import deepcopy
 
 import numpy as np
 import pandas as pd
@@ -237,6 +237,7 @@ def main():
     parser.add_argument("--pbar", action="store_true")
     parser.add_argument("--root", default="./results/embp/")
     parser.add_argument("--name", default=None)
+    # parser.add_argument("--skip_dup", action="store_true")
 
     parser.add_argument("--no_ci", action="store_true")
     parser.add_argument(
@@ -246,6 +247,7 @@ def main():
     parser.add_argument("--seed", default=0, type=int)
     parser.add_argument("--n_bootstrap", default=200, type=int)
     parser.add_argument("--gem", action="store_true")
+    parser.add_argument("-qK", "--quasi_K", default=100, type=int)
 
     args = parser.parse_args()
 
@@ -275,6 +277,15 @@ def main():
     # 2. 一类错误 & 效能
     # 3. 把参数默认值搞清楚
 
+    # if args.skip_dup:
+    #     runned_configs = []
+    #     for fn in os.listdir(args.root):
+    #         if fn.startswith(
+    #             args.outcome_type if args.name is None else args.name
+    #         ) and fn.endswith(".json"):
+    #             with open(osp.join(args.root, fn), "r") as f:
+    #                 runned_configs.append(json.load(f))
+
     for i, (ns, rx, bx) in enumerate(
         product(
             args.nsample_per_studies, args.ratio_x_per_studies, args.beta_x
@@ -284,8 +295,19 @@ def main():
             f"nsample per studies: {ns}, "
             f"ratio of observed x: {rx:.2f}, true beta x: {bx:.2f}"
         )
+        if ((ns, rx, bx) in [(100, 0.1, 0.), (100, 0.1, 1.)]):
+            print("skip")
+            continue
+
         seedi = args.seed + i
         nx = int(rx * ns)
+
+        json_content = deepcopy(args.__dict__)
+        json_content["nsample"] = ns
+        json_content["ratiox"] = rx
+        json_content["betax"] = bx
+        json_content["seed"] = seedi
+        json_content["nx"] = nx
 
         simulator = Simulator(
             type_outcome=args.outcome_type,
@@ -324,7 +346,8 @@ def main():
                 max_iter=args.max_iter,
                 seed=seedi,
                 n_bootstrap=args.n_bootstrap,
-                gem=args.gem
+                gem=args.gem,
+                quasi_mc_K=args.quasi_K,
             )
         else:
             embp_model = None
@@ -433,7 +456,7 @@ def main():
         )
         res.to_netcdf(ffn + ".nc")
         with open(ffn + ".json", "w") as f:
-            json.dump(args.__dict__, f)
+            json.dump(json_content, f)
 
 
 if __name__ == "__main__":

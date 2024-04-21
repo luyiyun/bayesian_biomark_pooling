@@ -73,7 +73,7 @@ class EMBP(BiomarkerPoolBase):
         pbar: bool = True,
         seed: int | None = 0,
         use_gpu: bool = False,
-        quasi_mc_K: int = 1000,
+        quasi_mc_K: int = 100,
         gem: bool = False,
     ) -> None:
         """

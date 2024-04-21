@@ -1,9 +1,8 @@
 import numpy as np
 from scipy.special import expit, ndtri
-
-# from scipy.optimize import minimize_scalar
 from numpy import ndarray
 from numpy.random import Generator
+
 
 from ..logger import logger_embp
 from .base import EM
@@ -27,8 +26,8 @@ class LapBinaryEM(EM):
         delta2_var: float = 1e-2,
         pbar: bool = True,
         random_seed: int | None | Generator = None,
-        K: int = 1000,
-        gem: bool = True
+        K: int = 10,
+        gem: bool = True,
     ) -> None:
         super().__init__(
             max_iter=max_iter,
@@ -229,36 +228,29 @@ class LapBinaryEM(EM):
             )
             hess = hess + hess_m
 
-            beta_delta = np.linalg.solve(hess, grad)  # scipy也有，更慢但是更稳定
-
-            # try:  # TODO:
-            #     beta_delta = np.linalg.solve(H, grad)
-            # except np.linalg.LinAlgError as e:
-            #     np.save("./Xo_des_tmp.npy", Xo_des)
-            #     np.save("./Yo_tmp.npy", Yo)
-            #     # print(np.cov(Xo_des.T))
-            #     # print(H)
-            #     # print(grad)
-            #     # import statsmodels.api as sm
-
-            #     # model = sm.Logit(Yo, Xo_des)
-            #     # res = model.fit()
-            #     # print(res.summary())
-            #     raise e
-
+            beta_delta = np.linalg.solve(hess, grad)
             # def obj(lr):
-            #     new_beta = beta_ - lr * beta_delta
-            #     p_o = log_expit((2 * Yo - 1) * (Xo_des @ new_beta))  # ns
-            #     p_m = log_expit((2 * Ym - 1) * (Xm_des @ new_beta))  # N x nm
-            #     return -(p_o.sum() + (p_m * wIS).sum())
-
-            # res = minimize_scalar(obj, bounds=(0.0, 1.0))
-            # if not res.success:
+            #     new_beta = beta_all - lr * beta_delta
+            #     p_o = log_expit(
+            #         (2 * self._Yo - 1) * (self._Xo_des @ new_beta)
+            #     ).sum()
+            #     p_m = (
+            #         log_expit(
+            #             (2 * self._Ym - 1)
+            #             * (new_beta[0] * h + self._Cm_des @ new_beta[1:])
+            #         )
+            #         .mean(axis=0)
+            #         .sum()
+            #     )
+            #     return -(p_o + p_m)
+            # best_lr = minimize_scalar(obj, bounds=(0.0, 1.0))
+            # if not best_lr.success:
             #     logger_embp.warning(
             #         "M step optimiztion lr searching fail to converge, "
-            #         f"msg: {res.message}"
+            #         f"msg: {best_lr.message}"
             #     )
-            # beta_delta *= res.x
+            # beta_delta *= best_lr.x
+
             if self._gem:
                 return beta_all - beta_delta
             rdiff = np.max(

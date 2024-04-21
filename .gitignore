@@ -6,3 +6,4 @@ experiments/results/
 *.npy
 *.csv
 *.ps
+*.png
