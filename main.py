@@ -237,7 +237,7 @@ def main():
     parser.add_argument("--pbar", action="store_true")
     parser.add_argument("--root", default="./results/embp/")
     parser.add_argument("--name", default=None)
-    # parser.add_argument("--skip_dup", action="store_true")
+    parser.add_argument("--skip", default=None, nargs="*", type=str)
 
     parser.add_argument("--no_ci", action="store_true")
     parser.add_argument(
@@ -285,6 +285,13 @@ def main():
     #         ) and fn.endswith(".json"):
     #             with open(osp.join(args.root, fn), "r") as f:
     #                 runned_configs.append(json.load(f))
+    if args.skip is not None:
+        skip_set = [
+            tuple([float(s) for s in skip_str.split(",")])
+            for skip_str in args.skip
+        ]
+    else:
+        skip_set = []
 
     for i, (ns, rx, bx) in enumerate(
         product(
@@ -295,7 +302,7 @@ def main():
             f"nsample per studies: {ns}, "
             f"ratio of observed x: {rx:.2f}, true beta x: {bx:.2f}"
         )
-        if ((ns, rx, bx) in [(100, 0.1, 0.), (100, 0.1, 1.)]):
+        if (ns, rx, bx) in skip_set:
             print("skip")
             continue
 
