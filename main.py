@@ -70,7 +70,8 @@ def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
 
 
 def temp_test_binary(
-    ci=False, seed=0, beta_z=None, nsample=100, n_knowX=10, beta_x=1.0
+    ci=False, seed=0, beta_z=None, nsample=100, n_knowX=10, beta_x=1.0,
+    binary_solve="lap"
 ):
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
@@ -94,6 +95,7 @@ def temp_test_binary(
         # n_importance_sampling=100,
         use_gpu=False,
         seed=seed,
+        binary_solve=binary_solve
     )
     model.fit(
         df["X"].values,
@@ -248,6 +250,9 @@ def main():
     parser.add_argument("--n_bootstrap", default=200, type=int)
     parser.add_argument("--gem", action="store_true")
     parser.add_argument("-qK", "--quasi_K", default=100, type=int)
+    parser.add_argument(
+        "-bs", "--binary_solve", default="lap", choices=["lap", "is"]
+    )
 
     args = parser.parse_args()
 
@@ -268,7 +273,8 @@ def main():
             temp_test_continue(ci=not args.no_ci, ve_method="bootstrap")
         elif args.outcome_type == "binary":
             temp_test_binary(
-                ci=not args.no_ci, seed=1, nsample=100, n_knowX=10, beta_x=0
+                ci=not args.no_ci, seed=1, nsample=100, n_knowX=10, beta_x=0,
+                binary_solve=args.binary_solve
             )
         return
 

@@ -4,8 +4,6 @@ import numpy as np
 from scipy.special import expit, log_expit, softmax
 from scipy.stats import norm
 
-from scipy.optimize import minimize_scalar
-
 # import pandas as pd
 from numpy import ndarray
 from numpy.random import Generator
@@ -19,75 +17,7 @@ EPS = 1e-5
 LOGIT_3 = 6.9067548
 
 
-def newton_raphson_beta(
-    init_beta: ndarray,
-    Xo_des: ndarray,  # ns x (1+S+p)
-    Xm_des: ndarray,  # N x nm x (1+S+p)
-    Yo: ndarray,
-    Ym: ndarray,
-    wIS: ndarray,  # N x nm
-    lr: float = 1.0,
-    max_iter: int = 100,
-    delta1: float = 1e-3,
-    delta2: float = 1e-4,
-):
-    # NOTE: 我自己的实现更快
-    beta_ = init_beta
-    for i in range(max_iter):
-        p_o = expit(Xo_des @ beta_)  # ns
-        p_m = expit(Xm_des @ beta_)  # N x nm
-        mul_o = p_o - Yo  # ns
-        mul_m = (p_m - Ym) * wIS  # N x nm
-        grad = Xo_des.T @ mul_o + np.einsum("nij,ni->j", Xm_des, mul_m)
-        H_o = np.einsum("ij,i,ik->jk", Xo_des, p_o * (1 - p_o), Xo_des)
-        H_m = np.einsum(
-            "nij,ni,nik->jk", Xm_des, p_m * (1 - p_m) * wIS, Xm_des
-        )
-        H = H_o + H_m
-
-        try:  # TODO:
-            beta_delta = np.linalg.solve(H, grad)
-        except np.linalg.LinAlgError as e:
-            np.save("./Xo_des_tmp.npy", Xo_des)
-            np.save("./Yo_tmp.npy", Yo)
-            # print(np.cov(Xo_des.T))
-            # print(H)
-            # print(grad)
-            # import statsmodels.api as sm
-
-            # model = sm.Logit(Yo, Xo_des)
-            # res = model.fit()
-            # print(res.summary())
-            raise e
-
-        def obj(lr):
-            new_beta = beta_ - lr * beta_delta
-            p_o = log_expit((2 * Yo - 1) * (Xo_des @ new_beta))  # ns
-            p_m = log_expit((2 * Ym - 1) * (Xm_des @ new_beta))  # N x nm
-            return -(p_o.sum() + (p_m * wIS).sum())
-
-        res = minimize_scalar(obj, bounds=(0.0, 1.0))
-        if not res.success:
-            logger_embp.warning(
-                "M step optimiztion lr searching fail to converge, "
-                f"msg: {res.message}"
-            )
-        beta_delta *= res.x
-        beta_ = beta_ - beta_delta
-
-        rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_) + delta1))
-        logger_embp.info(f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}")
-        if rdiff < delta2:
-            break
-    else:
-        logger_embp.warning(
-            f"M step Newton-Raphson (max_iter={max_iter}) doesn't converge"
-        )
-
-    return beta_
-
-
-class BinaryEM(EM):  # TODO: 有错误！！！！
+class ISBinaryEM(EM):
     def __init__(
         self,
         max_iter: int = 300,
@@ -103,6 +33,7 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
         lr: float = 1.0,
         min_nIS: int = 100,
         max_nIS: int = 5000,
+        gem: bool = True,
     ) -> None:
         assert max_nIS >= min_nIS
         super().__init__(
@@ -120,6 +51,7 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
         self._lr = lr
         self._nIS = self._min_nIS = min_nIS
         self._max_nIS = max_nIS
+        self._gem = gem
 
     def prepare(self):
         super().prepare()
@@ -128,7 +60,9 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
         for i in range(self._ns):
             C[self._ind_S[i], i] = 1
         self._Co = C[self._is_o, :]
-        self._Cm_ptype = C[self._is_m, :]
+        self._Cm_des = C[self._is_m, :]
+        if self._Z is not None:
+            self._Cm_des = np.concatenate([self._Cm_des, self._Zm], axis=1)
 
         Xo_des = [self._Xo[:, None], self._Co]  # 360 * 5
         if self._Z is not None:
@@ -280,25 +214,7 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
 
         # 使用newton-raphson算法更新beta_x,beta_0,beta_z
         beta_all = params[self._params_ind["beta_x"].start :]
-        Xm_des = [
-            self._XIS[:, :, None],
-            np.tile(self._Cm_ptype[None, ...], (self._nIS, 1, 1)),
-        ]
-        if self._Z is not None:
-            Xm_des.append(np.tile(self._Zm[None, ...], (self._nIS, 1, 1)))
-        Xm_des = np.concatenate(Xm_des, axis=-1)  # N x nm x (1+S+p)
-        beta_all = newton_raphson_beta(
-            init_beta=beta_all,
-            Xo_des=self._Xo_des,
-            Xm_des=Xm_des,
-            Yo=self._Yo,
-            Ym=self._Ym,
-            wIS=self._WIS,
-            lr=self._lr,
-            max_iter=self._max_iter_inner,
-            delta1=self._delta1_inner,
-            delta2=self._delta2_inner,
-        )
+        beta_all = self._update_beta_all(beta_all)
 
         return np.r_[
             mu_x,
@@ -308,6 +224,65 @@ class BinaryEM(EM):  # TODO: 有错误！！！！
             sigma2_w,
             beta_all,
         ]
+
+    def _update_beta_all(self, beta_all: ndarray) -> ndarray:
+        # NOTE: 我自己的实现更快
+        WXIS = self._XIS * self._WIS
+        for i in range(self._max_iter_inner):
+            # grad_o
+            p_o = expit(self._Xo_des @ beta_all)  # ns
+            grad = self._Xo_des.T @ (p_o - self._Yo)
+            # grad_m
+            p_m = expit(
+                self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:]
+            )  # N x nm
+            Esig = (p_m * self._WIS).sum(axis=0)
+            Esigx = (p_m * WXIS).sum(axis=0)
+            grad[0] += (Esigx - self._Ym * self._Xm).sum()
+            grad[1:] += self._Cm_des.T @ (Esig - self._Ym)
+
+            # hess_o
+            hess = np.einsum(
+                "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
+            )
+            p_m2 = p_m * (1 - p_m)
+            hess_m_00 = (p_m2 * self._XIS**2 * self.WIS).sum(axis=0).sum()
+            hess_m_01 = self._Cm_des.T @ (
+                (p_m2 * WXIS).sum(axis=0)
+            )
+            hess_m_11 = np.einsum(
+                "ij,i,ik",
+                self._Cm_des,
+                (p_m2 * self._WIS).sum(axis=0),
+                self._Cm_des,
+            )
+            hess_m = np.block(  # 这种比inplace替换([]+=)更快
+                [
+                    [hess_m_00, hess_m_01[None, :]],
+                    [hess_m_01[:, None], hess_m_11],
+                ]
+            )
+            hess = hess + hess_m
+            beta_delta = np.linalg.solve(hess, grad)
+            if self._gem:
+                return beta_all - beta_delta
+
+            rdiff = np.max(
+                np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
+            )
+            beta_all = beta_all - beta_delta
+            logger_embp.info(
+                f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
+            )
+            if rdiff < self._delta2_inner:
+                break
+        else:
+            logger_embp.warning(
+                f"M step Newton-Raphson (max_iter={self._max_iter_inner})"
+                " doesn't converge"
+            )
+
+        return beta_all
 
     def after_m_step(self):
         if self._max_nIS > self._min_nIS:

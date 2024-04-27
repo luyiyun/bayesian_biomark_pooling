@@ -99,9 +99,6 @@ class LapBinaryEM(EM):
         )
 
         beta_0_m_long = beta_0[self._ind_m_inv]
-        # a_m_long = a[self._ind_m_inv]
-        # b_m_long = b[self._ind_m_inv]
-        # sigma2_w_m_long = sigma2_w[self._ind_m_inv]
 
         # 使用newton-raphson方法得到Laplacian approximation
         # NOTE: 使用Scipy.Newton-CG无法收敛，反而自己的这个每次在3个步骤之内就收敛了
@@ -154,7 +151,6 @@ class LapBinaryEM(EM):
         self._Vm = (sigma2_w * sigma2_x)[self._ind_m_inv] / (
             p2_mult_m_long * p * (1 - p) + x_mult_m_long
         )
-        # self._norm_lap = norm(loc=self._Xm, scale=np.sqrt(self._Vm))  # + EPS
 
         # 计算Xhat和Xhat2
         self._Xhat[self._is_m] = self._Xm
@@ -182,7 +178,7 @@ class LapBinaryEM(EM):
 
         # 使用newton-raphson算法更新beta_x,beta_0,beta_z
         beta_all = params[self._params_ind["beta_x"].start :]
-        beta_all = self.update_beta_all(beta_all)
+        beta_all = self._update_beta_all(beta_all)
         return np.r_[
             mu_x,
             sigma2_x,
@@ -192,14 +188,14 @@ class LapBinaryEM(EM):
             beta_all,
         ]
 
-    def update_beta_all(self, beta_all: np.ndarray) -> np.ndarray:
+    def _update_beta_all(self, beta_all: np.ndarray) -> np.ndarray:
         # NOTE: 我自己的实现更快
         # 使用这个替代ppf函数，更快
         h = self._ppf_sn[:, None] * np.sqrt(self._Vm) + self._Xm
         for i in range(self._max_iter_inner):
             # 计算grad_o
             p_o = expit(self._Xo_des @ beta_all)  # no
-            grad = self._Xo_des.T @ p_o
+            grad = self._Xo_des.T @ (p_o - self._Yo)  # TODO: 改正之后效果不好
             # 计算grad_m
             sigma = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
             Esig = sigma.mean(axis=0)

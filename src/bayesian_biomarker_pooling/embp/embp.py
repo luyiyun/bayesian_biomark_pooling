@@ -10,8 +10,8 @@ from numpy.random import Generator
 from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
-# from .binary import BinaryEM
 from .binary_lap import LapBinaryEM
+from .binary_is import ISBinaryEM
 
 
 def bootstrap_estimator(
@@ -75,6 +75,9 @@ class EMBP(BiomarkerPoolBase):
         use_gpu: bool = False,
         quasi_mc_K: int = 100,
         gem: bool = False,
+        binary_solve: Literal["lap", "is"] = "lap",
+        importance_sampling_minK: int = 100,
+        importance_sampling_maxK: int = 5000,
     ) -> None:
         """
         delta2: 1e-5 for continue, 1e-2 for binary
@@ -82,6 +85,7 @@ class EMBP(BiomarkerPoolBase):
         """
         assert outcome_type in ["continue", "binary"]
         assert ci_method in ["bootstrap"]
+        assert binary_solve in ["lap", "is"]
         if use_gpu:
             try:
                 import torch
@@ -106,15 +110,19 @@ class EMBP(BiomarkerPoolBase):
         self.max_iter_inner_ = max_iter_inner
         self.delta1_ = delta1
         self.delta1_inner_ = delta1_inner
-        self.delta2_ = (
-            delta2 or {"continue": 1e-5, "binary": 1e-3}[outcome_type]
-        )
+        if delta2 is not None:
+            self.delta2_ = delta2
+        else:
+            if outcome_type == "continue":
+                self.delta2_ = 1e-5
+            else:
+                self.delta2_ = 1e-3 if binary_solve == "lap" else 1e-2
+        # self.delta2_ = (
+        #     delta2 or {"continue": 1e-5, "binary": 1e-3}[outcome_type]
+        # )
         self.delta2_inner_ = delta2_inner
         self.delta1_var_ = delta1_var
         self.delta2_var_ = delta2_var
-        # self.min_nIS_ = min_nIS
-        # self.max_nIS_ = max_nIS
-        # self.lr_ = lr
         self.pbar_ = pbar
         self.ci_ = ci
         self.ci_method_ = ci_method
@@ -123,8 +131,11 @@ class EMBP(BiomarkerPoolBase):
         self.use_gpu_ = use_gpu
         self.seed_ = np.random.default_rng(seed)
         self.gem_ = gem
+        self.binary_solve_ = binary_solve
 
         self.quasi_mc_K_ = quasi_mc_K
+        self.importance_sampling_minK = importance_sampling_minK
+        self.importance_sampling_maxK = importance_sampling_maxK
 
         if use_gpu and seed is not None:
             torch.random.manual_seed(seed)
@@ -178,20 +189,37 @@ class EMBP(BiomarkerPoolBase):
                     device="cuda:0",
                 )
             else:
-                self._estimator = LapBinaryEM(
-                    max_iter=self.max_iter_,
-                    max_iter_inner=self.max_iter_inner_,
-                    delta1=self.delta1_,
-                    delta1_inner=self.delta1_inner_,
-                    delta1_var=self.delta1_var_,
-                    delta2=self.delta2_,
-                    delta2_inner=self.delta2_inner_,
-                    delta2_var=self.delta2_var_,
-                    pbar=self.pbar_,
-                    random_seed=self.seed_,
-                    K=self.quasi_mc_K_,
-                    gem=self.gem_
-                )
+                if self.binary_solve_ == "lap":
+                    self._estimator = LapBinaryEM(
+                        max_iter=self.max_iter_,
+                        max_iter_inner=self.max_iter_inner_,
+                        delta1=self.delta1_,
+                        delta1_inner=self.delta1_inner_,
+                        delta1_var=self.delta1_var_,
+                        delta2=self.delta2_,
+                        delta2_inner=self.delta2_inner_,
+                        delta2_var=self.delta2_var_,
+                        pbar=self.pbar_,
+                        random_seed=self.seed_,
+                        K=self.quasi_mc_K_,
+                        gem=self.gem_
+                    )
+                elif self.binary_solve_ == "is":
+                    self._estimator = ISBinaryEM(
+                        max_iter=self.max_iter_,
+                        max_iter_inner=self.max_iter_inner_,
+                        delta1=self.delta1_,
+                        delta1_inner=self.delta1_inner_,
+                        delta1_var=self.delta1_var_,
+                        delta2=self.delta2_,
+                        delta2_inner=self.delta2_inner_,
+                        delta2_var=self.delta2_var_,
+                        pbar=self.pbar_,
+                        random_seed=self.seed_,
+                        gem=self.gem_,
+                        min_nIS=self.importance_sampling_minK,
+                        max_nIS=self.importance_sampling_maxK,
+                    )
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
 
