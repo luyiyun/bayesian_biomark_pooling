@@ -3,6 +3,7 @@ import os.path as osp
 import re
 import json
 from datetime import datetime
+from argparse import ArgumentParser
 
 import xarray as xr
 import numpy as np
@@ -184,12 +185,11 @@ class BrokenLinePlottor:
 
 
 def plot_lines(
-    name: str,
+    name: str | None,
     start: str | None = None,
     end: str | None = None,
     root: str = "./results/embp/",
 ):
-    root = "./results/embp/"
     methods = ["naive", "xonly", "EMBP"]
 
     fmt = "%Y-%m-%d_%H-%M-%S"
@@ -208,7 +208,7 @@ def plot_lines(
         fdt = datetime.strptime(sres.group(1), fmt)
         if fdt < dt_start or fdt > dt_end:
             continue
-        if name not in fn:
+        if name is not None and name not in fn:
             continue
 
         # 读取json文件
@@ -272,8 +272,14 @@ def plot_lines(
 
 
 def main():
-    plot_lines(name="continue_wo_z")
-    plot_lines(name="test_binary_wo_z")
+    parser = ArgumentParser()
+    parser.add_argument("--root", default="./results/embp/")
+    parser.add_argument("--start", default=None)
+    parser.add_argument("--end", default=None)
+    parser.add_argument("--name", default=None)
+    args = parser.parse_args()
+
+    plot_lines(name=args.name, start=args.start, end=args.end, root=args.root)
 
 
 if __name__ == "__main__":

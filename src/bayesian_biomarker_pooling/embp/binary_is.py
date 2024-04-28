@@ -246,7 +246,7 @@ class ISBinaryEM(EM):
                 "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
             )
             p_m2 = p_m * (1 - p_m)
-            hess_m_00 = (p_m2 * self._XIS**2 * self.WIS).sum(axis=0).sum()
+            hess_m_00 = (p_m2 * self._XIS**2 * self._WIS).sum(axis=0).sum()
             hess_m_01 = self._Cm_des.T @ (
                 (p_m2 * WXIS).sum(axis=0)
             )
