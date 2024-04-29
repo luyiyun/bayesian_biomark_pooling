@@ -188,8 +188,10 @@ class ISBinaryEM(EM):
                 + f"is {Seff.mean():.2f}±{Seff.std():.2f}"
             )
 
-        # 计算Xhat和Xhat2
-        self._Xhat[self._is_m] = np.sum(self._XIS * self._WIS, axis=0)
+        # 计算Xhat和Xhat2, 并讲self._Xm更新为IS计算的后验均值
+        self._Xhat[self._is_m] = self._Xm = np.sum(
+            self._XIS * self._WIS, axis=0
+        )
         self._Xhat2[self._is_m] = np.sum(self._XIS**2 * self._WIS, axis=0)
 
     def m_step(self, params: ndarray) -> ndarray:
@@ -247,9 +249,7 @@ class ISBinaryEM(EM):
             )
             p_m2 = p_m * (1 - p_m)
             hess_m_00 = (p_m2 * self._XIS**2 * self._WIS).sum(axis=0).sum()
-            hess_m_01 = self._Cm_des.T @ (
-                (p_m2 * WXIS).sum(axis=0)
-            )
+            hess_m_01 = self._Cm_des.T @ ((p_m2 * WXIS).sum(axis=0))
             hess_m_11 = np.einsum(
                 "ij,i,ik",
                 self._Cm_des,

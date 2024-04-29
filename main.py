@@ -258,6 +258,7 @@ def main():
     parser.add_argument(
         "-bs", "--binary_solve", default="lap", choices=["lap", "is"]
     )
+    parser.add_argument("--delta2", default=None, type=float)
 
     args = parser.parse_args()
 
@@ -370,6 +371,8 @@ def main():
                 n_bootstrap=args.n_bootstrap,
                 gem=args.gem,
                 quasi_mc_K=args.quasi_K,
+                delta2=args.delta2,
+                binary_solve=args.binary_solve
             )
         else:
             embp_model = None
