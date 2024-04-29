@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Callable
 from copy import deepcopy
 
 import pandas as pd
@@ -11,11 +11,14 @@ from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
 from .binary_lap import LapBinaryEM
+
 from .binary_is import ISBinaryEM
+
+# from .binary_is_numba import IS_binary_EM
 
 
 def bootstrap_estimator(
-    estimator: EM,
+    estimator: EM | Callable,
     X: ndarray,
     Y: ndarray,
     W: ndarray,
@@ -26,21 +29,22 @@ def bootstrap_estimator(
     seed: int | None | Generator = None,
     pbar: bool = True,
 ) -> pd.DataFrame:
-    assert hasattr(
-        estimator, "params_"
-    ), "please run regular EM iteration firstly!"
+    if isinstance(estimator, EM):
+        assert hasattr(
+            estimator, "params_"
+        ), "please run regular EM iteration firstly!"
+        init_params = estimator.params_.copy()
+        estimator._pbar = False
 
     seed = np.random.default_rng(seed)
     ind_bootstrap = seed.choice(
         Y.shape[0], (n_repeat, Y.shape[0]), replace=True
     )
 
-    estimator._pbar = False
-
-    init_params = estimator.params_.copy()
     params_bs = []
     for i in tqdm(range(n_repeat), disable=not pbar):
         ind_bs = ind_bootstrap[i]
+        # if isinstance(estimator, EM):
         estimator.register_data(
             X[ind_bs],
             S[ind_bs],
@@ -50,6 +54,15 @@ def bootstrap_estimator(
         )
         estimator.run(init_params=init_params)
         params_bs.append(estimator.params_)
+        # else:
+        #     params, _ = estimator(
+        #         X[ind_bs],
+        #         S[ind_bs],
+        #         W[ind_bs],
+        #         Y[ind_bs],
+        #         None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
+        #     )
+        #     params_bs.append(params)
 
     return np.stack(params_bs, axis=0)
 
@@ -129,7 +142,7 @@ class EMBP(BiomarkerPoolBase):
         self.ci_level_ = ci_level
         self.n_bootstrap_ = n_bootstrap
         self.use_gpu_ = use_gpu
-        self.seed_ = np.random.default_rng(seed)
+        self.seed_ = seed  # np.random.default_rng(seed)
         self.gem_ = gem
         self.binary_solve_ = binary_solve
 
@@ -160,6 +173,8 @@ class EMBP(BiomarkerPoolBase):
         Y: ndarray,
         Z: ndarray | None = None,
     ) -> None:
+        S = S.astype(int)
+
         if self.outcome_type_ == "continue":
             self._estimator = ContinueEM(
                 max_iter=self.max_iter_,
@@ -202,7 +217,7 @@ class EMBP(BiomarkerPoolBase):
                         pbar=self.pbar_,
                         random_seed=self.seed_,
                         K=self.quasi_mc_K_,
-                        gem=self.gem_
+                        gem=self.gem_,
                     )
                 elif self.binary_solve_ == "is":
                     self._estimator = ISBinaryEM(
@@ -220,6 +235,46 @@ class EMBP(BiomarkerPoolBase):
                         min_nIS=self.importance_sampling_minK,
                         max_nIS=self.importance_sampling_maxK,
                     )
+
+        # if self.outcome_type_ == "binary" and self.binary_solve_ == "is":
+        #     params, params_hist = IS_binary_EM(
+        #         X=X,
+        #         S=S,
+        #         W=W,
+        #         Y=Y,
+        #         Z=Z,
+        #         max_iter=self.max_iter_,
+        #         max_iter_inner=self.max_iter_inner_,
+        #         delta1=self.delta1_,
+        #         delta1_inner=self.delta1_inner_,
+        #         # delta1_var=self.delta1_var_,
+        #         delta2=self.delta2_,
+        #         delta2_inner=self.delta2_inner_,
+        #         # delta2_var=self.delta2_var_,
+        #         pbar=self.pbar_,
+        #         random_seed=self.seed_,
+        #         # lr=self.lr_,
+        #         min_nIS=self.importance_sampling_minK,
+        #         max_nIS=self.importance_sampling_maxK,
+        #         gem=self.gem_,
+        #     )
+        #     nz = 0 if Z is None else Z.shape[1]
+        #     ns = int((len(params) - 3 - nz) / 4)
+        #     param_names = (
+        #         ["mu_x", "sigma2_x"]
+        #         + ["a"] * ns
+        #         + ["b"] * ns
+        #         + ["sigma2_w"] * ns
+        #         + ["beta_x"]
+        #         + ["beta_0"] * ns
+        #         + ["beta_z"] * nz
+        #     )
+        #     self.params_ = pd.DataFrame(
+        #         {"estimate": params}, index=param_names
+        #     )
+        #     self.params_hist_ = pd.DataFrame(params_hist,
+        #                                       columns=param_names)
+        # else:
         self._estimator.register_data(X, S, W, Y, Z)
         self._estimator.run()
 
@@ -248,7 +303,36 @@ class EMBP(BiomarkerPoolBase):
                 print("Bootstrap: ")
             res_bootstrap = bootstrap_estimator(
                 # 使用复制品，而非原始的estimator
-                estimator=deepcopy(self._estimator),
+                estimator=(
+                    # (
+                    #     lambda x, s, w, y, z: IS_binary_EM(
+                    #         X=x,
+                    #         S=s,
+                    #         W=w,
+                    #         Y=y,
+                    #         Z=z,
+                    #         init_params=params,
+                    #         max_iter=self.max_iter_,
+                    #         max_iter_inner=self.max_iter_inner_,
+                    #         delta1=self.delta1_,
+                    #         delta1_inner=self.delta1_inner_,
+                    #         # delta1_var=self.delta1_var_,
+                    #         delta2=self.delta2_,
+                    #         delta2_inner=self.delta2_inner_,
+                    #         # delta2_var=self.delta2_var_,
+                    #         pbar=False,
+                    #         random_seed=self.seed_,
+                    #         # lr=self.lr_,
+                    #         min_nIS=self.importance_sampling_minK,
+                    #         max_nIS=self.importance_sampling_maxK,
+                    #         gem=self.gem_,
+                    #     )
+                    # )
+                    # if self.outcome_type_ == "binary"
+                    # and self.binary_solve_ == "is"
+                    # else deepcopy(self._estimator)
+                    deepcopy(self._estimator)
+                ),
                 X=X,
                 Y=Y,
                 W=W,
