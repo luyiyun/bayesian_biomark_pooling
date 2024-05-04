@@ -77,6 +77,8 @@ def temp_test_binary(
     n_knowX=10,
     beta_x=1.0,
     binary_solve="lap",
+    # beta_0=None,
+    prevalence=0.5,
 ):
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
@@ -89,6 +91,8 @@ def temp_test_binary(
         sigma2_e=[0.5, 0.75, 1.0, 1.25],
         beta_z=beta_z,
         beta_x=beta_x,
+        beta_0=None,
+        prevalence=prevalence
     )
     df = simulator.simulate(seed)
     model = EMBP(
