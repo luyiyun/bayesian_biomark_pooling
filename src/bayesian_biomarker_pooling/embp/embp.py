@@ -10,11 +10,7 @@ from numpy.random import Generator
 from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
-from .binary_lap import LapBinaryEM
-
-from .binary_is import ISBinaryEM
-
-# from .binary_is_numba import IS_binary_EM
+from .binary import LapBinaryEM, ISBinaryEM
 
 
 def bootstrap_estimator(
@@ -33,7 +29,7 @@ def bootstrap_estimator(
         assert hasattr(
             estimator, "params_"
         ), "please run regular EM iteration firstly!"
-        init_params = estimator.params_.copy()
+        init_params = estimator.params_
         estimator._pbar = False
 
     seed = np.random.default_rng(seed)
@@ -43,26 +39,19 @@ def bootstrap_estimator(
 
     params_bs = []
     for i in tqdm(range(n_repeat), disable=not pbar):
-        ind_bs = ind_bootstrap[i]
-        # if isinstance(estimator, EM):
-        estimator.register_data(
-            X[ind_bs],
-            S[ind_bs],
-            W[ind_bs],
-            Y[ind_bs],
-            None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
-        )
-        estimator.run(init_params=init_params)
-        params_bs.append(estimator.params_)
-        # else:
-        #     params, _ = estimator(
-        #         X[ind_bs],
-        #         S[ind_bs],
-        #         W[ind_bs],
-        #         Y[ind_bs],
-        #         None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
-        #     )
-        #     params_bs.append(params)
+        try:
+            ind_bs = ind_bootstrap[i]
+            estimator.run(
+                X[ind_bs],
+                S[ind_bs],
+                W[ind_bs],
+                Y[ind_bs],
+                None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
+                init_params=init_params,
+            )
+        except Exception:
+            pass
+        params_bs.append(estimator.parameters)
 
     return np.stack(params_bs, axis=0)
 
@@ -85,7 +74,7 @@ class EMBP(BiomarkerPoolBase):
         n_bootstrap: int = 200,
         pbar: bool = True,
         seed: int | None = 0,
-        use_gpu: bool = False,
+        device: str = "cpu",
         quasi_mc_K: int = 100,
         gem: bool = False,
         binary_solve: Literal["lap", "is"] = "lap",
@@ -99,7 +88,7 @@ class EMBP(BiomarkerPoolBase):
         assert outcome_type in ["continue", "binary"]
         assert ci_method in ["bootstrap"]
         assert binary_solve in ["lap", "is"]
-        if use_gpu:
+        if device != "cpu":
             try:
                 import torch
             except ImportError:
@@ -107,7 +96,10 @@ class EMBP(BiomarkerPoolBase):
                     "torch is not installed, "
                     "please install torch or BBP[torch]"
                 )
-        if use_gpu and outcome_type == "continue":
+        if (device != "cpu") and (
+            outcome_type == "continue"
+            or (outcome_type == "binary" and binary_solve == "lap")
+        ):
             raise NotImplementedError
         # if outcome_type == "binary" and ci:
         #     raise NotImplementedError
@@ -141,7 +133,7 @@ class EMBP(BiomarkerPoolBase):
         self.ci_method_ = ci_method
         self.ci_level_ = ci_level
         self.n_bootstrap_ = n_bootstrap
-        self.use_gpu_ = use_gpu
+        self.device_ = device
         self.seed_ = seed  # np.random.default_rng(seed)
         self.gem_ = gem
         self.binary_solve_ = binary_solve
@@ -150,7 +142,7 @@ class EMBP(BiomarkerPoolBase):
         self.importance_sampling_minK = importance_sampling_minK
         self.importance_sampling_maxK = importance_sampling_maxK
 
-        if use_gpu and seed is not None:
+        if (device != "cpu") and (seed is not None):
             torch.random.manual_seed(seed)
 
     @property
@@ -188,38 +180,23 @@ class EMBP(BiomarkerPoolBase):
                 pbar=self.pbar_,
             )
         elif self.outcome_type_ == "binary":
-            if self.use_gpu_:
-                from .binary_gpu import BinaryEMTorch
-
-                self._estimator = BinaryEMTorch(
+            if self.binary_solve_ == "lap":
+                self._estimator = LapBinaryEM(
                     max_iter=self.max_iter_,
                     max_iter_inner=self.max_iter_inner_,
                     delta1=self.delta1_,
                     delta1_inner=self.delta1_inner_,
+                    delta1_var=self.delta1_var_,
                     delta2=self.delta2_,
                     delta2_inner=self.delta2_inner_,
-                    delta1_var=self.delta1_var_,
                     delta2_var=self.delta2_var_,
                     pbar=self.pbar_,
-                    device="cuda:0",
+                    random_seed=self.seed_,
+                    K=self.quasi_mc_K_,
+                    gem=self.gem_,
                 )
-            else:
-                if self.binary_solve_ == "lap":
-                    self._estimator = LapBinaryEM(
-                        max_iter=self.max_iter_,
-                        max_iter_inner=self.max_iter_inner_,
-                        delta1=self.delta1_,
-                        delta1_inner=self.delta1_inner_,
-                        delta1_var=self.delta1_var_,
-                        delta2=self.delta2_,
-                        delta2_inner=self.delta2_inner_,
-                        delta2_var=self.delta2_var_,
-                        pbar=self.pbar_,
-                        random_seed=self.seed_,
-                        K=self.quasi_mc_K_,
-                        gem=self.gem_,
-                    )
-                elif self.binary_solve_ == "is":
+            elif self.binary_solve_ == "is":
+                if self.device_ == "cpu":
                     self._estimator = ISBinaryEM(
                         max_iter=self.max_iter_,
                         max_iter_inner=self.max_iter_inner_,
@@ -235,60 +212,32 @@ class EMBP(BiomarkerPoolBase):
                         min_nIS=self.importance_sampling_minK,
                         max_nIS=self.importance_sampling_maxK,
                     )
+                else:
+                    from .binary_is_gpu import ISBinaryEMTorch
 
-        # if self.outcome_type_ == "binary" and self.binary_solve_ == "is":
-        #     params, params_hist = IS_binary_EM(
-        #         X=X,
-        #         S=S,
-        #         W=W,
-        #         Y=Y,
-        #         Z=Z,
-        #         max_iter=self.max_iter_,
-        #         max_iter_inner=self.max_iter_inner_,
-        #         delta1=self.delta1_,
-        #         delta1_inner=self.delta1_inner_,
-        #         # delta1_var=self.delta1_var_,
-        #         delta2=self.delta2_,
-        #         delta2_inner=self.delta2_inner_,
-        #         # delta2_var=self.delta2_var_,
-        #         pbar=self.pbar_,
-        #         random_seed=self.seed_,
-        #         # lr=self.lr_,
-        #         min_nIS=self.importance_sampling_minK,
-        #         max_nIS=self.importance_sampling_maxK,
-        #         gem=self.gem_,
-        #     )
-        #     nz = 0 if Z is None else Z.shape[1]
-        #     ns = int((len(params) - 3 - nz) / 4)
-        #     param_names = (
-        #         ["mu_x", "sigma2_x"]
-        #         + ["a"] * ns
-        #         + ["b"] * ns
-        #         + ["sigma2_w"] * ns
-        #         + ["beta_x"]
-        #         + ["beta_0"] * ns
-        #         + ["beta_z"] * nz
-        #     )
-        #     self.params_ = pd.DataFrame(
-        #         {"estimate": params}, index=param_names
-        #     )
-        #     self.params_hist_ = pd.DataFrame(params_hist,
-        #                                       columns=param_names)
-        # else:
-        self._estimator.register_data(X, S, W, Y, Z)
-        self._estimator.run()
-
-        params_names = []
-        for k, v in self._estimator._params_ind.items():
-            if isinstance(v, slice):
-                params_names.extend([k] * (v.stop - v.start))
-            else:
-                params_names.append(k)
+                    self._estimator = ISBinaryEMTorch(
+                        max_iter=self.max_iter_,
+                        max_iter_inner=self.max_iter_inner_,
+                        delta1=self.delta1_,
+                        delta1_inner=self.delta1_inner_,
+                        delta2=self.delta2_,
+                        delta2_inner=self.delta2_inner_,
+                        delta1_var=self.delta1_var_,
+                        delta2_var=self.delta2_var_,
+                        pbar=self.pbar_,
+                        gem=self.gem_,
+                        min_nIS=self.importance_sampling_minK,
+                        max_nIS=self.importance_sampling_maxK,
+                        device=self.device_,
+                    )
+        self._estimator.run(X, S, W, Y, Z)
         self.params_ = pd.DataFrame(
-            {"estimate": self._estimator.params_}, index=params_names
+            {"estimate": self._estimator.parameters},
+            index=self._estimator.parameter_names,
         )
         self.params_hist_ = pd.DataFrame(
-            self._estimator.params_hist_, columns=params_names
+            self._estimator.parameter_history,
+            columns=self._estimator.parameter_names,
         )
 
         if not self.ci_:
@@ -303,36 +252,7 @@ class EMBP(BiomarkerPoolBase):
                 print("Bootstrap: ")
             res_bootstrap = bootstrap_estimator(
                 # 使用复制品，而非原始的estimator
-                estimator=(
-                    # (
-                    #     lambda x, s, w, y, z: IS_binary_EM(
-                    #         X=x,
-                    #         S=s,
-                    #         W=w,
-                    #         Y=y,
-                    #         Z=z,
-                    #         init_params=params,
-                    #         max_iter=self.max_iter_,
-                    #         max_iter_inner=self.max_iter_inner_,
-                    #         delta1=self.delta1_,
-                    #         delta1_inner=self.delta1_inner_,
-                    #         # delta1_var=self.delta1_var_,
-                    #         delta2=self.delta2_,
-                    #         delta2_inner=self.delta2_inner_,
-                    #         # delta2_var=self.delta2_var_,
-                    #         pbar=False,
-                    #         random_seed=self.seed_,
-                    #         # lr=self.lr_,
-                    #         min_nIS=self.importance_sampling_minK,
-                    #         max_nIS=self.importance_sampling_maxK,
-                    #         gem=self.gem_,
-                    #     )
-                    # )
-                    # if self.outcome_type_ == "binary"
-                    # and self.binary_solve_ == "is"
-                    # else deepcopy(self._estimator)
-                    deepcopy(self._estimator)
-                ),
+                estimator=deepcopy(self._estimator),
                 X=X,
                 Y=Y,
                 W=W,
@@ -361,7 +281,7 @@ class EMBP(BiomarkerPoolBase):
             # self.params_["CI_2"] = (
             #     self.params_["estimate"] + 1.96 * self.params_["std(log)"]
             # )
-            # is_sigma2 = self.params_.index.map(
+            # is_sigma2 = self.params.index.map(
             #     lambda x: x.startswith("sigma2")
             # )
             # self.params_.loc[is_sigma2, "CI_1"] = np.exp(

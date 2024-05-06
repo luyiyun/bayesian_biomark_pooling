@@ -2,13 +2,34 @@ import numpy as np
 from numpy import ndarray
 
 from ..logger import logger_embp
-from .base import EM
+from .base import NumpyEM
 from .utils import ols
 
 
-class ContinueEM(EM):
-    def prepare(self):
-        super().prepare()
+class ContinueEM(NumpyEM):
+
+    @property
+    def parameter_names(self) -> list:
+        return (
+            ["mu_x", "sigma_x"]
+            + [f"a_{si}" for si in self._studies]
+            + [f"b_{si}" for si in self._studies]
+            + [f"sigma2_w_{si}" for si in self._studies]
+            + ["beta_x"]
+            + [f"beta_0_{si}" for si in self._studies]
+            + [f"beta_z_{i}" for i in range(self._nz)]
+            + [f"sigma2_y_{si}" for si in self._studies]
+        )
+
+    def prepare(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+    ):
+        super().prepare(X, S, W, Y, Z)
 
         self._ybar_s = np.array(
             [self._Y[ind].mean(axis=-1) for ind in self._ind_S]

@@ -1,15 +1,21 @@
+import logging
+
 import numpy as np
-from scipy.special import expit, ndtri
+from scipy.special import expit, ndtri, log_expit, softmax
 from numpy import ndarray
 from numpy.random import Generator
-
+from scipy.stats import norm as norm_sc
 
 from ..logger import logger_embp
 from .base import NumpyEM
 from .utils import logistic
 
 
-class LapBinaryEM(NumpyEM):
+EPS = 1e-5
+LOGIT_3 = 6.9067548
+
+
+class BinaryEM(NumpyEM):
     def __init__(
         self,
         max_iter: int = 300,
@@ -22,7 +28,6 @@ class LapBinaryEM(NumpyEM):
         delta2_var: float = 1e-2,
         pbar: bool = True,
         random_seed: int | None | Generator = None,
-        K: int = 10,
         gem: bool = True,
     ) -> None:
         super().__init__(
@@ -38,9 +43,6 @@ class LapBinaryEM(NumpyEM):
             random_seed=random_seed,
         )
         self._gem = gem
-        self._K = K  # quasi-monte-carlo
-        self._unif_K = (np.arange(1, self._K) / self._K)[:, None]
-        self._ppf_sn = ndtri(self._unif_K).squeeze()
 
     @property
     def parameter_names(self) -> list:
@@ -64,15 +66,14 @@ class LapBinaryEM(NumpyEM):
     ):
         super().prepare(X, S, W, Y, Z)
 
-        self._Xm = np.zeros(self._n_m)  # 用于e-step中的newton algorithm
+        # 用于e-step中的newton algorithm，记录Laplacian Approximation的mu
+        self._Xm = np.zeros(self._n_m)
 
         C = np.zeros((self._n, self._ns))
         for i in range(self._ns):
             C[self._ind_S[i], i] = 1
-        self._Co = C[self._is_o, :]
-        self._Cm_ptype = C[self._is_m, :]
-        Cm_des = [self._Cm_ptype]
-        Xo_des = [self._Xo[:, None], self._Co]  # 360 * 5
+        Xo_des = [self._Xo[:, None], C[self._is_o, :]]  # 360 * 5
+        Cm_des = [C[self._is_m, :]]
         if self._Z is not None:
             Xo_des.append(self._Zo)
             Cm_des.append(self._Zm)
@@ -159,17 +160,22 @@ class LapBinaryEM(NumpyEM):
                 " doesn't converge"
             )
 
-        # 重新计算一次hessian
-        # 不要使用multivariate_norm，会导致维数灾难，
-        # 因为Xm的每个分量都是独立的，使用单变量的norm会好一些
+        # 重新计算一次hessian，并计算得到Laplacian Approximation的variance
         p = expit(self._Xm * beta_x + delta_part)
         self._Vm = (sigma2_w * sigma2_x)[self._ind_m_inv] / (
             p2_mult_m_long * p * (1 - p) + x_mult_m_long
         )
+        self._Xm_Sigma = np.sqrt(self._Vm)
 
-        # 计算Xhat和Xhat2
-        self._Xhat[self._is_m] = self._Xm
-        self._Xhat2[self._is_m] = self._Xm**2 + self._Vm
+        self._e_step_update_statistics(
+            mu_x=mu_x,
+            sigma2_x=sigma2_x,
+            beta_x=beta_x,
+            a=a,
+            b=b,
+            sigma2_w=sigma2_w,
+            delta_part=delta_part,
+        )
 
     def m_step(self, params: ndarray) -> ndarray:
         vbar = self._Xhat2.mean()
@@ -192,8 +198,9 @@ class LapBinaryEM(NumpyEM):
         )
 
         # 使用newton-raphson算法更新beta_x,beta_0,beta_z
+        # 基于Laplacian Approximation和Importance Sampling的过程会有不同
         beta_all = params[self._params_ind["beta_x"].start :]
-        beta_all = self._update_beta_all(beta_all)
+        beta_all = self._m_step_update_beta(beta_all)
         return np.r_[
             mu_x,
             sigma2_x,
@@ -203,14 +210,53 @@ class LapBinaryEM(NumpyEM):
             beta_all,
         ]
 
-    def _update_beta_all(self, beta_all: np.ndarray) -> np.ndarray:
+
+class LapBinaryEM(BinaryEM):
+    def __init__(
+        self,
+        max_iter: int = 300,
+        max_iter_inner: int = 100,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta1_var: float = 1e-2,
+        delta2: float = 1e-3,
+        delta2_inner: float = 1e-6,
+        delta2_var: float = 1e-2,
+        pbar: bool = True,
+        random_seed: int | None | Generator = None,
+        K: int = 10,
+        gem: bool = True,
+    ) -> None:
+        super().__init__(
+            max_iter=max_iter,
+            max_iter_inner=max_iter_inner,
+            delta1=delta1,
+            delta1_inner=delta1_inner,
+            delta1_var=delta1_var,
+            delta2=delta2,
+            delta2_inner=delta2_inner,
+            delta2_var=delta2_var,
+            pbar=pbar,
+            random_seed=random_seed,
+            gem=gem,
+        )
+        self._K = K  # quasi-monte-carlo
+        self._unif_K = (np.arange(1, self._K) / self._K)[:, None]
+        self._ppf_sn = ndtri(self._unif_K).squeeze()
+
+    def _e_step_update_statistics(self, **params):
+        # 计算Xhat和Xhat2
+        self._Xhat[self._is_m] = self._Xm
+        self._Xhat2[self._is_m] = self._Xm**2 + self._Vm
+
+    def _m_step_update_beta(self, beta_all: ndarray):
         # NOTE: 我自己的实现更快
         # 使用这个替代ppf函数，更快
-        h = self._ppf_sn[:, None] * np.sqrt(self._Vm) + self._Xm
+        h = self._ppf_sn[:, None] * self._Xm_Sigma + self._Xm
         for i in range(self._max_iter_inner):
             # 计算grad_o
             p_o = expit(self._Xo_des @ beta_all)  # no
-            grad = self._Xo_des.T @ (p_o - self._Yo)  # TODO: 改正之后效果不好
+            grad = self._Xo_des.T @ (p_o - self._Yo)
             # 计算grad_m
             sigma = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
             Esig = sigma.mean(axis=0)
@@ -240,30 +286,10 @@ class LapBinaryEM(NumpyEM):
             hess = hess + hess_m
 
             beta_delta = np.linalg.solve(hess, grad)
-            # def obj(lr):
-            #     new_beta = beta_all - lr * beta_delta
-            #     p_o = log_expit(
-            #         (2 * self._Yo - 1) * (self._Xo_des @ new_beta)
-            #     ).sum()
-            #     p_m = (
-            #         log_expit(
-            #             (2 * self._Ym - 1)
-            #             * (new_beta[0] * h + self._Cm_des @ new_beta[1:])
-            #         )
-            #         .mean(axis=0)
-            #         .sum()
-            #     )
-            #     return -(p_o + p_m)
-            # best_lr = minimize_scalar(obj, bounds=(0.0, 1.0))
-            # if not best_lr.success:
-            #     logger_embp.warning(
-            #         "M step optimiztion lr searching fail to converge, "
-            #         f"msg: {best_lr.message}"
-            #     )
-            # beta_delta *= best_lr.x
 
             if self._gem:
                 return beta_all - beta_delta
+
             rdiff = np.max(
                 np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
             )
@@ -280,3 +306,148 @@ class LapBinaryEM(NumpyEM):
             )
 
         return beta_all
+
+
+class ISBinaryEM(BinaryEM):
+    def __init__(
+        self,
+        max_iter: int = 300,
+        max_iter_inner: int = 100,
+        delta1: float = 1e-3,
+        delta1_inner: float = 1e-4,
+        delta1_var: float = 1e-2,
+        delta2: float = 1e-2,
+        delta2_inner: float = 1e-6,
+        delta2_var: float = 1e-2,
+        pbar: bool = True,
+        random_seed: int | None | Generator = None,
+        lr: float = 1.0,
+        min_nIS: int = 100,
+        max_nIS: int = 5000,
+        gem: bool = True,
+    ) -> None:
+        assert max_nIS >= min_nIS
+        super().__init__(
+            max_iter=max_iter,
+            max_iter_inner=max_iter_inner,
+            delta1=delta1,
+            delta1_inner=delta1_inner,
+            delta1_var=delta1_var,
+            delta2=delta2,
+            delta2_inner=delta2_inner,
+            delta2_var=delta2_var,
+            pbar=pbar,
+            random_seed=random_seed,
+            gem=gem,
+        )
+        self._lr = lr
+        self._nIS = self._min_nIS = min_nIS
+        self._max_nIS = max_nIS
+
+    def _e_step_update_statistics(self, **params):
+        beta_x = params["beta_x"]
+        mu_x = params["mu_x"]
+        sigma2_x = params["sigma2_x"]
+        delta_part = params["delta_part"]
+        a_m_long = params["a"][self._ind_m_inv]
+        b_m_long = params["b"][self._ind_m_inv]
+        sigma2_w_m_long = params["sigma2_w"][self._ind_m_inv]
+
+        norm_lap = norm_sc(
+            loc=self._Xm, scale=self._Xm_Sigma + EPS
+        )  # TODO: 这个EPS可能不是必须的
+
+        # 进行IS采样
+        self._XIS = norm_lap.rvs(
+            size=(self._nIS, self._n_m), random_state=self._seed
+        )  # N x n_m
+
+        # 计算对应的(normalized) importance weights
+        pIS = log_expit((2 * self._Ym - 1) * (beta_x * self._XIS + delta_part))
+        pIS -= 0.5 * (
+            (self._Wm - a_m_long - b_m_long * self._XIS) ** 2 / sigma2_w_m_long
+            + (self._XIS - mu_x) ** 2 / sigma2_x
+        )
+        pIS = pIS - norm_lap.logpdf(self._XIS)
+        # NOTE: 尽管归一化因子对于求极值没有贡献，但有助于稳定训练
+        self._WIS = softmax(pIS, axis=0)
+
+        if logger_embp.level <= logging.INFO:
+            Seff = 1 / np.sum(self._WIS**2, axis=0)
+            logger_embp.info(
+                "Importance effective size "
+                + f"is {Seff.mean():.2f}±{Seff.std():.2f}"
+            )
+
+        # 计算Xhat和Xhat2, 并讲self._Xm更新为IS计算的后验均值
+        self._Xhat[self._is_m] = self._Xm = np.sum(
+            self._XIS * self._WIS, axis=0
+        )
+        self._Xhat2[self._is_m] = np.sum(self._XIS**2 * self._WIS, axis=0)
+
+    def _m_step_update_beta(self, beta_all: ndarray) -> ndarray:
+        # NOTE: 我自己的实现更快
+        WXIS = self._XIS * self._WIS
+        for i in range(self._max_iter_inner):
+            # grad_o
+            p_o = expit(self._Xo_des @ beta_all)  # ns
+            grad = self._Xo_des.T @ (p_o - self._Yo)
+            # grad_m
+            p_m = expit(
+                self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:]
+            )  # N x nm
+            Esig = (p_m * self._WIS).sum(axis=0)
+            Esigx = (p_m * WXIS).sum(axis=0)
+            grad[0] += (Esigx - self._Ym * self._Xm).sum()
+            grad[1:] += self._Cm_des.T @ (Esig - self._Ym)
+
+            # hess_o
+            hess = np.einsum(
+                "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
+            )
+            p_m2 = p_m * (1 - p_m)
+            hess_m_00 = (p_m2 * self._XIS**2 * self._WIS).sum(axis=0).sum()
+            hess_m_01 = self._Cm_des.T @ ((p_m2 * WXIS).sum(axis=0))
+            hess_m_11 = np.einsum(
+                "ij,i,ik",
+                self._Cm_des,
+                (p_m2 * self._WIS).sum(axis=0),
+                self._Cm_des,
+            )
+            hess_m = np.block(  # 这种比inplace替换([]+=)更快
+                [
+                    [hess_m_00, hess_m_01[None, :]],
+                    [hess_m_01[:, None], hess_m_11],
+                ]
+            )
+            hess = hess + hess_m
+            beta_delta = np.linalg.solve(hess, grad)
+            if self._gem:
+                return beta_all - beta_delta
+
+            rdiff = np.max(
+                np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
+            )
+            beta_all = beta_all - beta_delta
+            logger_embp.info(
+                f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
+            )
+            if rdiff < self._delta2_inner:
+                break
+        else:
+            logger_embp.warning(
+                f"M step Newton-Raphson (max_iter={self._max_iter_inner})"
+                " doesn't converge"
+            )
+
+        return beta_all
+
+    def after_iter(self):
+        if self._max_nIS > self._min_nIS:
+            self._nIS = self._min_nIS + int(
+                (self._max_nIS - self._min_nIS)
+                * expit(2 * LOGIT_3 * self._iter_i / self._max_iter - LOGIT_3)
+            )
+            logger_embp.info(
+                f"Update Monte Carlo Sampling size to {self._nIS}."
+            )

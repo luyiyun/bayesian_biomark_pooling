@@ -1,3 +1,5 @@
+from abc import abstractmethod
+
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 import numpy as np
@@ -5,7 +7,7 @@ from numpy import ndarray
 from numpy.random import Generator
 
 from ..logger import logger_embp
-from .utils import batch_nonzero, ols
+from .utils import ols
 
 
 class EM:
@@ -34,12 +36,104 @@ class EM:
         # 如果是Generator，则default_rng会直接返回它自身
         self._seed = np.random.default_rng(random_seed)
 
-    def get_params_names(self):
-        return np.concatenate(
-            [[k] * (v.stop - v.start) for k, v in self._params_ind.items()]
-        )
+    @property
+    def parameters(self) -> ndarray:
+        """返回EM算法估计的参数值"""
+        return self.params_
 
-    def register_data(
+    @property
+    @abstractmethod
+    def parameter_history(self) -> ndarray:
+        """返回EM算法的参数更新历史"""
+
+    @property
+    @abstractmethod
+    def parameter_names(self) -> ndarray:
+        """返回参数值的名称"""
+
+    def run(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+        init_params: ndarray | None = None,
+    ):
+        self.prepare(X, S, W, Y, Z)
+
+        params = self.init() if init_params is None else init_params
+        self.params_hist_ = [params]
+        with logging_redirect_tqdm(loggers=[logger_embp]):
+            for self._iter_i in tqdm(
+                range(1, self._max_iter + 1),
+                desc="EM: ",
+                disable=not self._pbar,
+            ):
+                self.e_step(params)
+                params_new = self.m_step(params)
+
+                rdiff = self.calc_rdiff(params_new, params)
+                logger_embp.info(
+                    f"EM iteration {self._iter_i}: "
+                    f"relative difference is {rdiff: .4f}"
+                )
+                params = params_new  # 更新
+                self.params_hist_.append(params)
+
+                if rdiff < self._delta2:
+                    # self.iter_convergence_ = self._iter_i
+                    break
+
+                self.after_iter()
+            else:
+                logger_embp.warning(
+                    f"EM iteration (max_iter={self._max_iter}) "
+                    "doesn't converge"
+                )
+
+        self.params_ = params
+        # self.params_hist_ = np.stack(self.params_hist_)
+
+    @abstractmethod
+    def prepare(
+        self,
+        X: ndarray,
+        S: ndarray,
+        W: ndarray,
+        Y: ndarray,
+        Z: ndarray | None = None,
+    ):
+        """载入数据，并进行一些预先计算"""
+
+    @abstractmethod
+    def init(self) -> ndarray:
+        """初始化参数"""
+
+    @abstractmethod
+    def e_step(self, params: ndarray):
+        """E step，计算得到充分统计量"""
+
+    @abstractmethod
+    def m_step(self, params: ndarray) -> ndarray:
+        """M step，更新参数值"""
+
+    @abstractmethod
+    def calc_rdiff(self, new: ndarray, old: ndarray) -> float:
+        """计算相对差异，用于判断是否停止迭代"""
+
+    def after_iter(self):
+        """每次迭代后需要做的事情"""
+        pass
+
+
+class NumpyEM(EM):
+
+    @property
+    def parameter_history(self) -> ndarray:
+        return np.stack(self.params_hist_)
+
+    def prepare(
         self,
         X: ndarray,
         S: ndarray,
@@ -58,12 +152,11 @@ class EM:
         self._Y = Y
         self._Z = Z
 
-    def prepare(self):
         # 准备后续步骤中会用到的array，预先计算，节省效率
         self._is_m = np.isnan(self._X)
         self._is_o = ~self._is_m
-        self._ind_m = batch_nonzero(self._is_m)
-        self._ind_o = batch_nonzero(self._is_o)
+        self._ind_m = np.nonzero(self._is_m)[0]
+        self._ind_o = np.nonzero(self._is_o)[0]
 
         self._Xo = self._X[self._ind_o]
         self._Yo = self._Y[self._ind_o]
@@ -154,59 +247,10 @@ class EM:
         res = np.concatenate([mu_x, sigma2_x, a, b, sigma2_w], axis=-1)
         return res
 
-    def e_step(self, params: ndarray):
-        """Expectation step
-
-        从EM算法的定义上，是计算log joint likelihood的后验期望，也就是Q function。
-        但是，在code中一般不是计算这个，而是计算Q function中关于后验期望的部分，
-        以便于后面的m step。
-        """
-        raise NotImplementedError
-
-    def m_step(self, params: ndarray) -> ndarray:
-        raise NotImplementedError
-
-    def after_m_step(self):
-        pass
-
-    def run(self, init_params: ndarray | None = None):
-        self.prepare()
-
-        params = self.init() if init_params is None else init_params
-        self.params_hist_ = [params]
-        with logging_redirect_tqdm(loggers=[logger_embp]):
-            for self._iter_i in tqdm(
-                range(1, self._max_iter + 1),
-                desc="EM: ",
-                disable=not self._pbar,
-            ):
-                self.e_step(params)
-                params_new = self.m_step(params)
-
-                rdiff = np.max(
-                    np.abs(params - params_new)
-                    / (np.abs(params) + self._delta1),
-                )
-                logger_embp.info(
-                    f"EM iteration {self._iter_i}: "
-                    f"relative difference is {rdiff: .4f}"
-                )
-                params = params_new  # 更新
-                self.params_hist_.append(params)
-
-                if rdiff < self._delta2:  # TODO: 这里有优化的空间
-                    self.iter_convergence_ = self._iter_i
-                    break
-
-                self.after_m_step()
-            else:
-                logger_embp.warning(
-                    f"EM iteration (max_iter={self._max_iter}) "
-                    "doesn't converge"
-                )
-
-        self.params_ = params
-        self.params_hist_ = np.stack(self.params_hist_)
+    def calc_rdiff(self, new: ndarray, old: ndarray) -> float:
+        return np.max(
+            np.abs(old - new) / (np.abs(old) + self._delta1)
+        )
 
     # def v_joint(self, params: pd.Series) -> ndarray:
     #     raise NotImplementedError

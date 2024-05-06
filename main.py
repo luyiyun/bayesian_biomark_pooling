@@ -8,6 +8,13 @@ from typing import Literal, Sequence
 from argparse import ArgumentParser
 from itertools import product
 from copy import deepcopy
+from time import perf_counter
+
+# os.environ["OMP_NUM_THREADS"] = "1"
+# os.environ["MKL_NUM_THREADS"] = "1"
+# os.environ["OPENBLAS_NUM_THREADS"] = "1"
+# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+# os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import numpy as np
 import pandas as pd
@@ -15,6 +22,8 @@ import xarray as xr
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import statsmodels.api as sm
+import torch
+import torch.multiprocessing as mp_torch
 
 from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling import EMBP
@@ -79,6 +88,7 @@ def temp_test_binary(
     binary_solve="lap",
     # beta_0=None,
     prevalence=0.5,
+    gpu=False,
 ):
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
@@ -92,7 +102,7 @@ def temp_test_binary(
         beta_z=beta_z,
         beta_x=beta_x,
         beta_0=None,
-        prevalence=prevalence
+        prevalence=prevalence,
     )
     df = simulator.simulate(seed)
     model = EMBP(
@@ -102,7 +112,7 @@ def temp_test_binary(
         # max_iter=300,
         pbar=True,
         # n_importance_sampling=100,
-        use_gpu=False,
+        device="cuda:0" if gpu else "cpu",
         seed=seed,
         binary_solve=binary_solve,
     )
@@ -171,7 +181,20 @@ def trial_once_by_simulator_and_estimator(
         "naive",
         "EMBP",
     ),
+    gpu_and_mp: bool = False,
+    logging: bool = False,
+    queue: None = None,
 ) -> dict[str, np.ndarray]:
+    if queue is not None:
+        estimator["device"] = queue.get()
+    device = estimator["device"]
+    if logging:
+        print(f"seed = {seed}, device = {device}, start.")
+        t1 = perf_counter()
+
+    if gpu_and_mp:
+        torch.set_num_threads(1)
+
     # 1. generate data
     df = simulator.simulate(seed=seed)
     zind = df.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
@@ -196,6 +219,14 @@ def trial_once_by_simulator_and_estimator(
             estimator.fit(X, df["S"].values, W, Y, Z)
             res = estimator.params_.values
         res_all[methodi] = res
+
+    if logging:
+        t2 = perf_counter()
+        print(f"seed = {seed}, end, {t2-t1:.4f}s.")
+
+    if queue is not None:
+        queue.put(device)
+
     return res_all
 
 
@@ -262,9 +293,16 @@ def main():
     parser.add_argument(
         "-bs", "--binary_solve", default="lap", choices=["lap", "is"]
     )
+    parser.add_argument("-g", "--gpu", action="store_true")
     parser.add_argument("--delta2", default=None, type=float)
+    parser.add_argument(
+        "-ismK", "--importance_sampling_maxK", default=5000, type=int
+    )
 
     args = parser.parse_args()
+
+    if args.gpu:
+        mp_torch.set_start_method("spawn")
 
     log_level = {
         "error": logging.ERROR,
@@ -289,6 +327,7 @@ def main():
                 n_knowX=10,
                 beta_x=args.beta_x[0],
                 binary_solve=args.binary_solve,
+                gpu=args.gpu,
             )
         return
 
@@ -355,17 +394,7 @@ def main():
         params_ser = simulator.parameters_series
 
         if "EMBP" in args.methods:
-            # embp_kwargs = dict(
-            #     outcome_type=args.outcome_type,
-            #     ci=not args.no_ci,
-            #     ci_method=args.ci_method,
-            #     pbar=args.pbar,
-            #     max_iter=args.max_iter,
-            #     seed=seedi,
-            #     n_bootstrap=args.n_bootstrap,
-            #     gem=args.gem
-            # )
-            embp_model = EMBP(
+            embp_kwargs = dict(
                 outcome_type=args.outcome_type,
                 ci=not args.no_ci,
                 ci_method=args.ci_method,
@@ -376,10 +405,13 @@ def main():
                 gem=args.gem,
                 quasi_mc_K=args.quasi_K,
                 delta2=args.delta2,
-                binary_solve=args.binary_solve
+                binary_solve=args.binary_solve,
+                device="cuda:0" if args.gpu else "cpu",
+                importance_sampling_maxK=args.importance_sampling_maxK,
             )
+            embp_model = EMBP(**embp_kwargs)
         else:
-            embp_model = None
+            embp_kwargs = None
 
         res_arrs = {}
         if args.ncores <= 1:
@@ -387,31 +419,66 @@ def main():
                 resi = trial_once_by_simulator_and_estimator(
                     type_outcome=args.outcome_type,
                     simulator=simulator,
-                    estimator=embp_model,
+                    estimator=embp_kwargs,
                     seed=j + seedi,
                     methods=args.methods,
                 )
                 for k, arr in resi.items():
                     res_arrs.setdefault(k, []).append(arr)
         else:
-            with mp.Pool(args.ncores) as pool:
-                tmp_reses = [
-                    pool.apply_async(
-                        trial_once_by_simulator_and_estimator,
-                        (
-                            args.outcome_type,
-                            simulator,
-                            embp_model,
-                            j + seedi,
-                            args.methods,
-                        ),
+            if args.gpu:
+                n_cudas = torch.cuda.device_count()
+                if n_cudas != args.ncores:
+                    print(
+                        f"Only {n_cudas} gpus, thus "
+                        f"open {n_cudas} subprocesses, not {args.ncores}."
                     )
-                    for j in range(args.nrepeat)
-                ]
-                for tmp_resi in tqdm(tmp_reses):
-                    resi = tmp_resi.get()
-                    for k, arr in resi.items():
-                        res_arrs.setdefault(k, []).append(arr)
+
+                manager = mp_torch.Manager()
+                q = manager.Queue()
+                for i in range(n_cudas):
+                    q.put(f"cuda:{i}")
+
+                with mp_torch.Pool(n_cudas) as pool:
+                    tmp_reses = [
+                        pool.apply_async(
+                            trial_once_by_simulator_and_estimator,
+                            kwds={
+                                "type_outcome": args.outcome_type,
+                                "simulator": simulator,
+                                "estimator": embp_kwargs,
+                                "seed": j + seedi,
+                                "methods": args.methods,
+                                "gpu_and_mp": False,
+                                "logging": False,
+                                "queue": q,
+                            }
+                        )
+                        for j in range(args.nrepeat)
+                    ]
+                    for tmp_resi in tqdm(tmp_reses):
+                        resi = tmp_resi.get()
+                        for k, arr in resi.items():
+                            res_arrs.setdefault(k, []).append(arr)
+            else:
+                with mp.Pool(args.ncores) as pool:
+                    tmp_reses = [
+                        pool.apply_async(
+                            trial_once_by_simulator_and_estimator,
+                            (
+                                args.outcome_type,
+                                simulator,
+                                embp_kwargs,
+                                j + seedi,
+                                args.methods,
+                            ),
+                        )
+                        for j in range(args.nrepeat)
+                    ]
+                    for tmp_resi in tqdm(tmp_reses):
+                        resi = tmp_resi.get()
+                        for k, arr in resi.items():
+                            res_arrs.setdefault(k, []).append(arr)
 
         # 3. collect results
         res_all = {

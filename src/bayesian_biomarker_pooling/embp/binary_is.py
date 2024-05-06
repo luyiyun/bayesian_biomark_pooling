@@ -9,7 +9,7 @@ from numpy import ndarray
 from numpy.random import Generator
 
 from ..logger import logger_embp
-from .base import EM
+from .base import NumpyEM
 from .utils import logistic
 
 
@@ -17,7 +17,7 @@ EPS = 1e-5
 LOGIT_3 = 6.9067548
 
 
-class ISBinaryEM(EM):
+class ISBinaryEM(NumpyEM):
     def __init__(
         self,
         max_iter: int = 300,
