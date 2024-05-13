@@ -184,11 +184,13 @@ class BrokenLinePlottor:
         ax.set_ylim(ymin, ymax)
 
 
-def plot_lines(
-    name: str | None,
+def plot_lines_and_table(
+    save_fn: str | None,
     start: str | None = None,
     end: str | None = None,
-    root: str = "./results/embp/",
+    roots: list[str] = [
+        "./results/embp/",
+    ],
 ):
     methods = ["naive", "xonly", "EMBP"]
 
@@ -201,62 +203,85 @@ def plot_lines(
     dt_end = datetime.now() if end is None else datetime.strptime(end, fmt)
 
     res = []
-    for fn in os.listdir(root):
-        sres = re.search(r"(2024-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}).nc", fn)
-        if sres is None:
-            continue
-        fdt = datetime.strptime(sres.group(1), fmt)
-        if fdt < dt_start or fdt > dt_end:
-            continue
-        if name is not None and name not in fn:
-            continue
+    for root in roots:
+        for fn in os.listdir(root):
+            sres = re.search(r"(2024-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}).nc", fn)
+            if sres is None:
+                continue
+            fdt = datetime.strptime(sres.group(1), fmt)
+            if fdt < dt_start or fdt > dt_end:
+                continue
 
-        # 读取json文件
-        with open(osp.join(root, fn[:-3] + ".json"), "r") as f:
-            attrs = json.load(f)
+            # 读取json文件
+            with open(osp.join(root, fn[:-3] + ".json"), "r") as f:
+                attrs = json.load(f)
 
-        ffn = osp.join(root, fn)
-        dt = xr.load_dataset(ffn)
-        da_true = dt["true"].sel(params="beta_x").item()
+            ffn = osp.join(root, fn)
+            dt = xr.load_dataset(ffn)
+            da_true = dt["true"].sel(params="beta_x").item()
 
-        for key in methods:
-            diff = dt[key].sel(params="beta_x", statistic="estimate") - da_true
-            # bias
-            bias_mean = diff.mean().item()
-            bias_std = diff.std().item()
-            # mse
-            mse = (diff**2).mean().item()
-            # cov rate
-            covr = (
-                (
-                    (dt[key].sel(params="beta_x", statistic="CI_1") <= da_true)
-                    & (
-                        dt[key].sel(params="beta_x", statistic="CI_2")
-                        >= da_true
-                    )
+            for key in methods:
+                diff = (
+                    dt[key].sel(params="beta_x", statistic="estimate")
+                    - da_true
                 )
-                .mean()
-                .item()
-            )
+                # bias
+                bias_mean = diff.mean().item()
+                bias_std = diff.std().item()
+                # mse
+                mse = (diff**2).mean().item()
+                # cov rate
+                covr = (
+                    (
+                        (
+                            dt[key].sel(params="beta_x", statistic="CI_1")
+                            <= da_true
+                        )
+                        & (
+                            dt[key].sel(params="beta_x", statistic="CI_2")
+                            >= da_true
+                        )
+                    )
+                    .mean()
+                    .item()
+                )
 
-            resi = {
-                "bias": bias_mean,
-                "bias_std": bias_std,
-                "mse": mse,
-                "cov_rate": covr,
-                "beta_x": da_true,
-                "method": key,
-                "datetime": fdt,
-                "n_sample_per_studies": attrs["nsample"],
-                "x_ratio": attrs["ratiox"],
-            }
-            res.append(resi)
+                resi = {
+                    "bias": bias_mean,
+                    "bias_std": bias_std,
+                    "mse": mse,
+                    "cov_rate": covr,
+                    "beta_x": da_true,
+                    "method": key,
+                    "datetime": fdt,
+                    "n_sample_per_studies": attrs["nsample"],
+                    "x_ratio": attrs["ratiox"],
+                }
+                res.append(resi)
 
     res = pd.DataFrame.from_records(res)
     res["x_ratio"] = res["x_ratio"].astype("category")
     # bias计算为绝对值
     res["bias"] = res["bias"].abs()
-    print(res.to_string())
+    # print(res.to_string())
+
+    # summarized tables
+    res_summ = (
+        res.drop(columns=["datetime", "bias_std"])
+        .groupby(["beta_x", "x_ratio", "n_sample_per_studies", "method"])
+        .agg(
+            {
+                "bias": lambda x: (
+                    f"{x.mean():.4f}±{x.std()/np.sqrt(len(x)):.4f}"
+                ),
+                "mse": np.mean,
+                "cov_rate": np.mean,
+            }
+        )
+    ).unstack(level="beta_x")
+    with pd.ExcelWriter(save_fn + ".xlsx") as writer:
+        res.to_excel(writer, sheet_name="raw")
+        res_summ.to_excel(writer, sheet_name="summary")
 
     plottor = BrokenLinePlottor(3, 3)
     for metric in ["bias", "mse", "cov_rate"]:
@@ -268,18 +293,20 @@ def plot_lines(
             col="x_ratio",
             row="beta_x",
         )
-        fg.savefig(osp.join(root, f"{name}_{metric}.png"))
+        fg.savefig(save_fn + f"_{metric}.png")
 
 
 def main():
     parser = ArgumentParser()
-    parser.add_argument("--root", default="./results/embp/")
+    parser.add_argument("--root", default=["./results/embp/"], nargs="+")
     parser.add_argument("--start", default=None)
     parser.add_argument("--end", default=None)
-    parser.add_argument("--name", default=None)
+    parser.add_argument("--save_fn", default=None)
     args = parser.parse_args()
 
-    plot_lines(name=args.name, start=args.start, end=args.end, root=args.root)
+    plot_lines_and_table(
+        save_fn=args.save_fn, start=args.start, end=args.end, roots=args.root
+    )
 
 
 if __name__ == "__main__":
