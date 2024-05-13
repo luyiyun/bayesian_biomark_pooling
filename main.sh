@@ -22,6 +22,11 @@
 #     -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0 -pr 0.5 -qK 500 --skip 100,0.1,0 100,0.1,0.5 100,0.1,1.0
 
 # ISbinary, without z,
-python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 2 --log error --gem \
+# 1. in gpu3
+# python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
+#     -bs is --delta2 0.01 --gpu -pr 0.5 --root ./results/binary_IS_wo_z_nr200 \
+#     -nsps 100 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
+# 2. in gpu2
+python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
     -bs is --delta2 0.01 --gpu -pr 0.5 --root ./results/binary_IS_wo_z_nr200 \
-    -nsps 100 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
+    -nsps 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
