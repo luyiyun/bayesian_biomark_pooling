@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 from numpy import ndarray
 from numpy.random import Generator
+from scipy.special import ndtri
 
 from ..base import BiomarkerPoolBase
 from .base import EM
@@ -86,7 +87,7 @@ class EMBP(BiomarkerPoolBase):
         max_iter: 500 for continue, 300 for binary
         """
         assert outcome_type in ["continue", "binary"]
-        assert ci_method in ["bootstrap"]
+        assert ci_method in ["bootstrap", "sem"]
         assert binary_solve in ["lap", "is"]
         if device != "cpu":
             try:
@@ -271,24 +272,15 @@ class EMBP(BiomarkerPoolBase):
             self.params_["CI_1"] = res_ci[0, :]
             self.params_["CI_2"] = res_ci[1, :]
         else:
-            raise NotImplementedError("没有考虑ci_level")
-            # params_var_ = self._estimator.estimate_variance()
-            # self.params_["variance(log)"] = params_var_
-            # self.params_["std(log)"] = np.sqrt(params_var_)
-            # self.params_["CI_1"] = (
-            #     self.params_["estimate"] - 1.96 * self.params_["std(log)"]
-            # )
-            # self.params_["CI_2"] = (
-            #     self.params_["estimate"] + 1.96 * self.params_["std(log)"]
-            # )
-            # is_sigma2 = self.params.index.map(
-            #     lambda x: x.startswith("sigma2")
-            # )
-            # self.params_.loc[is_sigma2, "CI_1"] = np.exp(
-            #     np.log(self.params_.loc[is_sigma2, "estimate"])
-            #     - 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-            # )
-            # self.params_.loc[is_sigma2, "CI_2"] = np.exp(
-            #     np.log(self.params_.loc[is_sigma2, "estimate"])
-            #     + 1.96 * self.params_.loc[is_sigma2, "std(log)"]
-            # )
+            zalpha = ndtri(quan2)
+
+            params_var_, ind_sigma2 = self._estimator.estimate_variance()
+            self.params_["variance(log)"] = params_var_
+            self.params_["std(log)"] = np.sqrt(params_var_)
+            CI = np.stack([
+                self.params_["estimate"] - zalpha * self.params_["std(log)"],
+                self.params_["estimate"] + zalpha * self.params_["std(log)"]
+            ], axis=1)
+            CI[ind_sigma2] = np.exp(CI[ind_sigma2])
+            self.params_["CI_1"] = CI[:, 0]
+            self.params_["CI_2"] = CI[:, 1]

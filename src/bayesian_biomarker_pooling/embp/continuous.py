@@ -1,5 +1,6 @@
 import numpy as np
 from numpy import ndarray
+from scipy.linalg import block_diag as sc_block_diag
 
 from ..logger import logger_embp
 from .base import NumpyEM
@@ -279,128 +280,135 @@ class ContinueEM(NumpyEM):
             axis=-1,
         )
 
-    # def v_joint(self, params: ndarray) -> ndarray:
-    #     mu_x = params["mu_x"]
-    #     sigma2_x = params["sigma2_x"]
-    #     a = params["a"].values
-    #     b = params["b"].values
-    #     sigma2_w = params["sigma2_w"].values
-    #     beta_x = params["beta_x"]
-    #     beta_z = params["beta_z"].values if self._Z is not None else 0.0
-    #     beta_0 = params["beta_0"].values
-    #     sigma2_y = params["sigma2_y"].values
+    def v_joint(self, params: ndarray) -> ndarray:
+        mu_x, sigma2_x, a, b, sigma2_w, beta_x, beta_0, sigma2_y = (
+            params[self._params_ind[k]]
+            for k in [
+                "mu_x",
+                "sigma2_x",
+                "a",
+                "b",
+                "sigma2_w",
+                "beta_x",
+                "beta_0",
+                "sigma2_y",
+            ]
+        )
+        beta_z = (
+            params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
+        )
+        mu_x, sigma2_x = mu_x[0], sigma2_x[0]  # array->item
 
-    #     self.e_step(params)
+        self.e_step(params)
 
-    #     xbar = self._Xhat.mean()
-    #     vbar = self._Xhat2.mean()
-    #     wxbar_s = np.array(
-    #         [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
-    #     )
-    #     vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
-    #     xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
+        xbar = self._Xhat.mean()
+        vbar = self._Xhat2.mean()
+        wxbar_s = np.array(
+            [np.mean(self._W[ind] * self._Xhat[ind]) for ind in self._ind_S]
+        )
+        vbar_s = np.array([np.mean(self._Xhat2[ind]) for ind in self._ind_S])
+        xbar_s = np.array([np.mean(self._Xhat[ind]) for ind in self._ind_S])
 
-    #     xybar_s = np.array(
-    #         [np.mean(self._Xhat[ind] * self._Y[ind]) for ind in self._ind_S]
-    #     )
-    #     if self._Z is not None:
-    #         xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
-    #         xzbar_s = np.stack(
-    #             [
-    #                 np.mean(self._Xhat[ind, None] * self._Z[ind, :], axis=0)
-    #                 for ind in self._ind_S
-    #             ],
-    #             axis=0,
-    #         )
+        xybar_s = np.array(
+            [np.mean(self._Xhat[ind] * self._Y[ind]) for ind in self._ind_S]
+        )
+        if self._Z is not None:
+            xzbar = np.mean(self._Xhat[:, None] * self._Z, axis=0)
+            xzbar_s = np.stack(
+                [
+                    np.mean(self._Xhat[ind, None] * self._Z[ind, :], axis=0)
+                    for ind in self._ind_S
+                ],
+                axis=0,
+            )
 
-    #     x12 = (xbar - mu_x) / sigma2_x
-    #     V1 = self._n * np.array(
-    #         [
-    #             [1 / sigma2_x, x12],
-    #             [x12, 0.5 * (vbar - mu_x**2) / sigma2_x],
-    #         ]
-    #     )
+        x12 = (xbar - mu_x) / sigma2_x
+        V1 = self._n * np.array(
+            [
+                [1 / sigma2_x, x12],
+                [x12, 0.5 * (vbar - mu_x**2) / sigma2_x],
+            ]
+        )
 
-    #     temp_mul = self._n_s / sigma2_w
-    #     A = np.diag(temp_mul)
-    #     B = np.diag(temp_mul * xbar_s)
-    #     C = np.diag(temp_mul * (self._wbar_s - a - b * xbar_s))
-    #     D = np.diag(temp_mul * vbar_s)
-    #     E = np.diag(temp_mul * (wxbar_s - a * xbar_s - b * vbar_s))
-    #     F = np.diag(
-    #         0.5
-    #         * temp_mul
-    #         * (
-    #             self._wwbar_s
-    #             + a**2
-    #             + b**2 * vbar_s
-    #             - 2 * a * self._wbar_s
-    #             - 2 * b * wxbar_s
-    #             + 2 * a * b * xbar_s
-    #         )
-    #     )
-    #     V2 = np.block([[A, B, C], [B, D, E], [C, E, F]])
+        temp_mul = self._n_s / sigma2_w
+        A = np.diag(temp_mul)
+        B = np.diag(temp_mul * xbar_s)
+        C = np.diag(temp_mul * (self._wbar_s - a - b * xbar_s))
+        D = np.diag(temp_mul * vbar_s)
+        E = np.diag(temp_mul * (wxbar_s - a * xbar_s - b * vbar_s))
+        F = np.diag(
+            0.5
+            * temp_mul
+            * (
+                self._wwbar_s
+                + a**2
+                + b**2 * vbar_s
+                - 2 * a * self._wbar_s
+                - 2 * b * wxbar_s
+                + 2 * a * b * xbar_s
+            )
+        )
+        V2 = np.block([[A, B, C], [B, D, E], [C, E, F]])
 
-    #     sigma2_y_long = sigma2_y[self._ind_inv]
-    #     temp_mul = self._n_s / sigma2_y
-    #     if self._Z is not None:
-    #         B = np.sum(self._n_s[None, :] * xzbar_s, axis=0, keepdims=True)
-    #         E = temp_mul[None, :] * self._zbar_s
-    #         G = (self._Z.T * sigma2_y_long) @ self._Z
-    #         H = temp_mul * (
-    #             self._yzbar_s.T
-    #             - beta_0 * self._zbar_s.T
-    #             - beta_x * xzbar_s.T
-    #             - (self._zzbar_s @ beta_z).T
-    #         )
+        sigma2_y_long = sigma2_y[self._ind_inv]
+        temp_mul = self._n_s / sigma2_y
+        if self._Z is not None:
+            B = np.sum(self._n_s[None, :] * xzbar_s, axis=0, keepdims=True)
+            E = temp_mul[None, :] * self._zbar_s
+            G = (self._Z.T * sigma2_y_long) @ self._Z
+            H = temp_mul * (
+                self._yzbar_s.T
+                - beta_0 * self._zbar_s.T
+                - beta_x * xzbar_s.T
+                - (self._zzbar_s @ beta_z).T
+            )
 
-    #         dz2 = np.sum(
-    #             beta_z * beta_z[:, None] * self._zzbar_s,
-    #             axis=(1, 2),
-    #         )
-    #         J_zpart = (
-    #             dz2
-    #             - 2 * self._yzbar_s @ beta_z
-    #             + 2 * beta_0 * self._zbar_s @ beta_z
-    #             + 2 * xzbar_s * beta_z * beta_x
-    #         )
-    #         C_zpart = -xzbar @ beta_z
-    #         F_zpart = -self._zbar_s @ beta_z
-    #     else:
-    #         J_zpart = 0.0
-    #         C_zpart = 0.0
-    #         F_zpart = 0.0
-    #     K = np.array([[np.sum(temp_mul * vbar_s)]])
-    #     A = (temp_mul * xbar_s)[None, :]
-    #     C = (
-    #         temp_mul * (xybar_s - beta_0 *
-    #         xbar_s - beta_x * vbar_s + C_zpart)
-    #     )[None, :]
-    #     D = np.diag(temp_mul)
-    #     F = np.diag(
-    #         temp_mul * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart)
-    #     )
-    #     J = np.diag(
-    #         0.5
-    #         * temp_mul
-    #         * (
-    #             self._yybar_s
-    #             + beta_0**2
-    #             + beta_x**2 * vbar_s
-    #             - 2 * beta_0 * self._ybar_s
-    #             - 2 * beta_x * xybar_s
-    #             + 2 * beta_0 * beta_x * xbar_s
-    #             + J_zpart
-    #         )
-    #     )
-    #     V3 = [[K, A, C], [A.T, D, F], [C.T, F.T, J]]
-    #     if self._Z is not None:
-    #         V3[0].insert(2, B)
-    #         V3[1].insert(2, E)
-    #         V3[2].insert(2, H.T)
-    #         V3.insert(2, [B.T, E.T, G, H])
-    #     V3 = np.block(V3)
+            dz2 = np.sum(
+                beta_z * beta_z[:, None] * self._zzbar_s,
+                axis=(1, 2),
+            )
+            J_zpart = (
+                dz2
+                - 2 * self._yzbar_s @ beta_z
+                + 2 * beta_0 * self._zbar_s @ beta_z
+                + 2 * xzbar_s * beta_z * beta_x
+            )
+            C_zpart = -xzbar @ beta_z
+            F_zpart = -self._zbar_s @ beta_z
+        else:
+            J_zpart = 0.0
+            C_zpart = 0.0
+            F_zpart = 0.0
+        K = np.array([[np.sum(temp_mul * vbar_s)]])
+        A = (temp_mul * xbar_s)[None, :]
+        C = (
+            temp_mul * (xybar_s - beta_0 * xbar_s - beta_x * vbar_s + C_zpart)
+        )[None, :]
+        D = np.diag(temp_mul)
+        F = np.diag(
+            temp_mul * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart)
+        )
+        J = np.diag(
+            0.5
+            * temp_mul
+            * (
+                self._yybar_s
+                + beta_0**2
+                + beta_x**2 * vbar_s
+                - 2 * beta_0 * self._ybar_s
+                - 2 * beta_x * xybar_s
+                + 2 * beta_0 * beta_x * xbar_s
+                + J_zpart
+            )
+        )
+        V3 = [[K, A, C], [A.T, D, F], [C.T, F.T, J]]
+        if self._Z is not None:
+            V3[0].insert(2, B)
+            V3[1].insert(2, E)
+            V3[2].insert(2, H.T)
+            V3.insert(2, [B.T, E.T, G, H])
+        V3 = np.block(V3)
 
-    #     return block_diag(
-    #         np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
-    #     )
+        return sc_block_diag(
+            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
+        )

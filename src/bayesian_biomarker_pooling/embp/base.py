@@ -248,84 +248,82 @@ class NumpyEM(EM):
         return res
 
     def calc_rdiff(self, new: ndarray, old: ndarray) -> float:
-        return np.max(
-            np.abs(old - new) / (np.abs(old) + self._delta1)
+        return np.max(np.abs(old - new) / (np.abs(old) + self._delta1))
+
+    def v_joint(self, params_log: ndarray) -> ndarray:
+        """ 计算Vjoint，注意的时候是对应于log sigma2进行的 """
+        raise NotImplementedError
+
+    def estimate_variance(self) -> ndarray:
+        params_w_log = self.parameters.copy()
+        ind_sigma2 = np.nonzero(
+            [pn.startswith("sigma2") for pn in self.parameter_names]
+        )[0]
+        params_w_log[ind_sigma2] = np.log(params_w_log[ind_sigma2])
+        n_params = params_w_log.shape[0]
+
+        params_hist = self.parameter_history
+
+        rind_uncovg = list(range(n_params))
+        R = []
+        with logging_redirect_tqdm(loggers=[logger_embp]):
+            for t in tqdm(
+                range(params_hist.shape[0]),
+                desc="Estimate Variance: ",
+                disable=not self._pbar,
+            ):
+                params_t = params_hist[t, :]
+                Rt = np.zeros((n_params, n_params)) if t == 0 else R[-1].copy()
+                for j in rind_uncovg:
+                    inpt = self.parameters.copy()
+                    x = inpt[j] = params_t[j]
+                    if j in ind_sigma2:
+                        x = np.log(x)
+                    # 计算差值比来作为导数的估计
+                    dx = x - params_w_log[j]
+                    if (
+                        dx == 0
+                    ):  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
+                        continue
+
+                    self.e_step(inpt)
+                    oupt = self.m_step(inpt)
+                    # 修改sigma2为log尺度
+                    oupt[ind_sigma2] = np.log(oupt[ind_sigma2])
+
+                    Rt[j, :] = (oupt - params_w_log) / dx
+
+                # 看一下有哪些行完成了收敛
+                if t > 0:
+                    rdiff = np.max(
+                        np.abs(Rt - R[-1])
+                        / (np.abs(R[-1]) + self._delta1_var),
+                        axis=1,
+                    )
+                    new_rind_uncovg = np.nonzero(rdiff >= self._delta2_var)[0]
+                    if len(new_rind_uncovg) < len(rind_uncovg):
+                        logger_embp.info(
+                            "unfinished row ind:" + str(rind_uncovg)
+                        )
+                    rind_uncovg = new_rind_uncovg
+
+                R.append(Rt)
+                if len(rind_uncovg) == 0:
+                    break
+            else:
+                logger_embp.warn("estimate variance does not converge.")
+
+        self._R = np.stack(R, axis=0)
+        DM = R[-1]
+
+        v_joint = self.v_joint(self.params_)
+        self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
+            np.diag(np.ones(n_params)) - DM
         )
-
-    # def v_joint(self, params: pd.Series) -> ndarray:
-    #     raise NotImplementedError
-
-    # def estimate_variance(self) -> ndarray:
-    #     n_params = self.params_.shape[0]
-
-    #     ind_sigma2 = np.nonzero(
-    #         self.params_.index.map(lambda x: x.startswith("sigma2"))
-    #     )[0]
-    #     params_w_log = self.params_.copy()
-    #     params_w_log.iloc[ind_sigma2] = np.log(params_w_log.iloc[ind_sigma2])
-
-    #     rind_uncovg = list(range(n_params))
-    #     R = []
-    #     with logging_redirect_tqdm(loggers=[logger_embp]):
-    #         for t in tqdm(
-    #             range(self.params_hist_.shape[0]),
-    #             desc="Estimate Variance: ",
-    #             disable=not self._pbar,
-    #         ):
-    #             params_t = self.params_hist_.iloc[t, :]
-    #             Rt = np.zeros((n_params, n_params)) if t == 0
-    #                           else R[-1].copy()
-    #             for j in rind_uncovg:
-    #                 inpt = self.params_.copy()
-    #                 x = inpt.iloc[j] = params_t.iloc[j]
-    #                 if j in ind_sigma2:
-    #                     x = np.log(x)
-    #                 # 计算差值比来作为导数的估计
-    #                 dx = x - params_w_log.iloc[j]
-    #                 if (
-    #                     dx == 0
-    #                 ):  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
-    #                     continue
-
-    #                 self.e_step(inpt)
-    #                 oupt = self.m_step(inpt)
-    #                 # 修改sigma2为log尺度
-    #                 oupt.iloc[ind_sigma2] = np.log(oupt.iloc[ind_sigma2])
-
-    #                 Rt[j, :] = (oupt.values - params_w_log.values) / dx
-
-    #             # 看一下有哪些行完成了收敛
-    #             if t > 0:
-    #                 rdiff = np.max(
-    #                     np.abs(Rt - R[-1])
-    #                     / (np.abs(R[-1]) + self._delta1_var),
-    #                     axis=1,
-    #                 )
-    #                 new_rind_uncovg = np.nonzero(
-    #                           rdiff >= self._delta2_var)[0]
-    #                 if len(new_rind_uncovg) < len(rind_uncovg):
-    #                     logger_embp.info(
-    #                         "unfinished row ind:" + str(rind_uncovg)
-    #                     )
-    #                 rind_uncovg = new_rind_uncovg
-
-    #             R.append(Rt)
-    #             if len(rind_uncovg) == 0:
-    #                 break
-    #         else:
-    #             logger_embp.warn("estimate variance does not converge.")
-
-    #     self._R = np.stack(R, axis=0)
-    #     DM = R[-1]
-
-    #     v_joint = self.v_joint(self.params_)
-    #     self.params_cov_ = v_joint + v_joint @ DM @ np.linalg.inv(
-    #         np.diag(np.ones(n_params)) - DM
-    #     )
-    #     # TODO: 会出现一些方差<0，可能源于
-    #     params_var = np.diag(self.params_cov_)
-    #     # if np.any(params_var < 0.0):
-    #     #     print(self.params_.index.values[params_var < 0.0])
-    #     #     dv = params_var - np.diag(v_joint)
-    #     #     import ipdb; ipdb.set_trace()
-    #     return params_var
+        # TODO: 会出现一些方差<0，可能源于
+        params_var = np.diag(self.params_cov_)
+        # if np.any(params_var < 0.0):
+        #     print(self.params_.index.values[params_var < 0.0])
+        #     dv = params_var - np.diag(v_joint)
+        #     import ipdb; ipdb.set_trace()
+        return params_var, ind_sigma2

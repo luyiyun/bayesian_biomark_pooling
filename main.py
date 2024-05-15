@@ -89,6 +89,7 @@ def temp_test_binary(
     # beta_0=None,
     prevalence=0.5,
     gpu=False,
+    ci_method="bootstrap",
 ):
     root = "./results/tmp_embp"
     os.makedirs(root, exist_ok=True)
@@ -115,6 +116,7 @@ def temp_test_binary(
         device="cuda:0" if gpu else "cpu",
         seed=seed,
         binary_solve=binary_solve,
+        ci_method=ci_method
     )
     model.fit(
         df["X"].values,
@@ -318,7 +320,7 @@ def main():
 
     if args.test:
         if args.outcome_type == "continue":
-            temp_test_continue(ci=not args.no_ci, ve_method="bootstrap")
+            temp_test_continue(ci=not args.no_ci, ve_method=args.ci_method)
         elif args.outcome_type == "binary":
             temp_test_binary(
                 ci=not args.no_ci,
@@ -328,6 +330,7 @@ def main():
                 beta_x=args.beta_x[0],
                 binary_solve=args.binary_solve,
                 gpu=args.gpu,
+                ci_method=args.ci_method
             )
         return
 

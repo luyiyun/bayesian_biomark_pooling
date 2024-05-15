@@ -27,6 +27,11 @@
 #     -bs is --delta2 0.01 --gpu -pr 0.5 --root ./results/binary_IS_wo_z_nr200 \
 #     -nsps 100 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
 # 2. in gpu2
-python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
-    -bs is --delta2 0.01 --gpu -pr 0.5 --root ./results/binary_IS_wo_z_nr200 \
-    -nsps 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
+# python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
+#     -bs is --delta2 0.01 --gpu -pr 0.5 --root ./results/binary_IS_wo_z_nr200 \
+#     -nsps 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
+
+# continue, without z, just for EMBP-sem
+python main.py --name continue_wo_z --nrepeat 1000 --ncore 20 --log error \
+    -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 1.0 2.0 --methods EMBP --ci_method sem\
+    --root ./results/continue_wo_z_EMBP_sem
