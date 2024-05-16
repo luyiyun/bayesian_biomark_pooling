@@ -1,5 +1,6 @@
 from typing import Literal, Callable
 from copy import deepcopy
+import warnings
 
 import pandas as pd
 import numpy as np
@@ -276,11 +277,20 @@ class EMBP(BiomarkerPoolBase):
 
             params_var_, ind_sigma2 = self._estimator.estimate_variance()
             self.params_["variance(log)"] = params_var_
-            self.params_["std(log)"] = np.sqrt(params_var_)
-            CI = np.stack([
-                self.params_["estimate"] - zalpha * self.params_["std(log)"],
-                self.params_["estimate"] + zalpha * self.params_["std(log)"]
-            ], axis=1)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore", "invalid value encountered in sqrt"
+                )
+                self.params_["std(log)"] = np.sqrt(params_var_)
+            CI = np.stack(
+                [
+                    self.params_["estimate"]
+                    - zalpha * self.params_["std(log)"],
+                    self.params_["estimate"]
+                    + zalpha * self.params_["std(log)"],
+                ],
+                axis=1,
+            )
             CI[ind_sigma2] = np.exp(CI[ind_sigma2])
             self.params_["CI_1"] = CI[:, 0]
             self.params_["CI_2"] = CI[:, 1]

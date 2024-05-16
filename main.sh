@@ -32,6 +32,11 @@
 #     -nsps 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0
 
 # continue, without z, just for EMBP-sem
-python main.py --name continue_wo_z --nrepeat 1000 --ncore 20 --log error \
-    -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 1.0 2.0 --methods EMBP --ci_method sem\
-    --root ./results/continue_wo_z_EMBP_sem
+# python main.py --name continue_wo_z --nrepeat 1000 --ncore 20 --log error \
+#     -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 1.0 2.0 --methods EMBP --ci_method sem\
+#     --root ./results/continue_wo_z_EMBP_sem
+
+# Lap binary, without z
+python main.py --name binary_wo_z --outcome_type binary --nrepeat 1000 --ncore 20 --log error --gem \
+    --root ./results/binary_wo_z_qK100_fix_EMBP_sem --methods EMBP --ci_method sem \
+    -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0 -pr 0.5 -qK 100
