@@ -539,3 +539,89 @@ class ISBinaryEM(BinaryEM):
             logger_embp.info(
                 f"Update Monte Carlo Sampling size to {self._nIS}."
             )
+
+    def v_joint(self, params: ndarray) -> ndarray:
+        mu_x, sigma2_x, a, b, sigma2_w = (
+            params[self._params_ind[k]]
+            for k in [
+                "mu_x",
+                "sigma2_x",
+                "a",
+                "b",
+                "sigma2_w",
+            ]
+        )
+        beta_all = params[self._params_ind["beta_x"].start :]
+        mu_x, sigma2_x = mu_x[0], sigma2_x[0]  # array->item
+
+        self.e_step(params)
+
+        xbar = self._Xhat.mean()
+        vbar = self._Xhat2.mean()
+        xbars = np.array([self._Xhat[sind].mean() for sind in self._ind_S])
+        vbars = np.array([self._Xhat2[sind].mean() for sind in self._ind_S])
+        wxbars = np.array(
+            [np.mean(self._W[sind] * self._Xhat[sind]) for sind in self._ind_S]
+        )
+
+        x12 = (xbar - mu_x) / sigma2_x
+        V1 = self._n * np.array(
+            [
+                [1 / sigma2_x, x12],
+                [x12, 0.5 * (vbar - mu_x**2) / sigma2_x],
+            ]
+        )
+
+        temp_mul = self._n_s / sigma2_w
+        A = np.diag(temp_mul)
+        B = np.diag(temp_mul * xbars)
+        C = np.diag(temp_mul * (self._wbar_s - a - b * xbars))
+        D = np.diag(temp_mul * vbars)
+        E = np.diag(temp_mul * (wxbars - a * xbars - b * vbars))
+        F = np.diag(
+            0.5
+            * temp_mul
+            * (
+                self._wwbar_s
+                + a**2
+                + b**2 * vbars
+                - 2 * a * self._wbar_s
+                - 2 * b * wxbars
+                + 2 * a * b * xbars
+            )
+        )
+        V2 = np.block([[A, B, C], [B, D, E], [C, E, F]])
+
+        p2 = np.zeros(self._n)
+        po = expit(self._Xo_des @ beta_all)  # ns
+        p2[self._ind_o] = po * (1 - po)
+        p2x = p2 * self._X
+        p2xx = p2x * self._X
+        pm_ = expit(
+            self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:]
+        )  # N x n_m
+        pm2_ = pm_ * (1 - pm_) * self._WIS
+        p2[self._ind_m] = pm2_.sum(axis=0)  # 注意这里是sum而非mean
+        p2x[self._ind_m] = (pm2_ * self._XIS).sum(axis=0)
+        p2xx[self._ind_m] = (pm2_ * self._XIS ** 2).sum(axis=0)
+
+        K = np.array([[p2xx.sum()]])
+        A = np.array([[p2x[ind].sum() for ind in self._ind_S]])
+        D = np.diag([p2[ind].sum() for ind in self._ind_S])
+        V3 = [[K, A], [A.T, D]]
+        if self._Z is not None:
+            B = (self._Z.T @ p2x)[None, :]
+            p2z = p2[:, None] * self._Z
+            E = np.stack(
+                [p2z[ind].sum(axis=0) for ind in self._ind_S],
+                axis=0,
+            )
+            G = np.einsum("ij,ik,i->jk", self._Z, self._Z, p2)
+            V3[0].insert(2, B)
+            V3[1].insert(2, E)
+            V3.insert(2, [B.T, E.T, G])
+        V3 = np.block(V3)
+
+        return sc_block_diag(
+            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
+        )

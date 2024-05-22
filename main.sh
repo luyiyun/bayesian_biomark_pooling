@@ -36,7 +36,18 @@
 #     -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 1.0 2.0 --methods EMBP --ci_method sem\
 #     --root ./results/continue_wo_z_EMBP_sem
 
-# Lap binary, without z
-python main.py --name binary_wo_z --outcome_type binary --nrepeat 1000 --ncore 20 --log error --gem \
-    --root ./results/binary_wo_z_qK100_fix_EMBP_sem --methods EMBP --ci_method sem \
-    -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0 -pr 0.5 -qK 100
+# Lap binary, without z just for EMBP-lap-sem
+# python main.py --name binary_wo_z --outcome_type binary --nrepeat 1000 --ncore 20 --log error --gem \
+#     --root ./results/binary_wo_z_qK100_fix_EMBP_sem --methods EMBP --ci_method sem \
+#     -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0 -pr 0.5 -qK 100
+
+# ISbinary, without z, just for EMBP-is-sem
+# 1. in cpu test
+# python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
+#     -bs is --delta2 0.01 -pr 0.5 --root ./results/binary_IS_wo_z_nr200_EMBP_sem_1 \
+#     --methods EMBP --ci_method sem \
+#     -nsps 100 -rxps 0.1 -bx 0.0
+python main.py --name binary_wo_z_IS --outcome_type binary --nrepeat 200 --ncore 4 --log error --gem \
+    -bs is --delta2 0.01 -pr 0.5 --root ./results/binary_IS_wo_z_nr200_EMBP_sem_2 \
+    --methods EMBP --ci_method sem \
+    -nsps 100 150 200 250 -rxps 0.1 0.15 0.2 -bx 0.0 0.5 1.0 --skip 100,0.1,0.0
