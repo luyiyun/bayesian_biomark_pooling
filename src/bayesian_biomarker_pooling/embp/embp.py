@@ -79,7 +79,7 @@ class EMBP(BiomarkerPoolBase):
         device: str = "cpu",
         quasi_mc_K: int = 100,
         gem: bool = False,
-        binary_solve: Literal["lap", "is"] = "lap",
+        binary_solve: Literal["lap", "is"] = "is",
         importance_sampling_minK: int = 100,
         importance_sampling_maxK: int = 5000,
     ) -> None:

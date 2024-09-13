@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.figure import Figure
 from matplotlib.axes import Axes
+from bayesian_biomarker_pooling import EMBP
 
 
 plt.rcParams["font.family"] = "Times New Roman"
@@ -323,7 +324,7 @@ def continue_wo_z():
     )
     res_summ_cov_rate = (
         res_summ.drop(columns=["datetime", "bias_std", "bias", "mse"])
-        .replace({"method": {"EMBP": "EMBP-is"}})
+        .replace({"method": {"EMBP": "EMBP-bs"}})
         .set_index(
             ["beta_x", "x_ratio", "n_sample_per_studies", "method"],
             drop=True,
@@ -345,7 +346,7 @@ def continue_wo_z():
     for metric in ["bias", "mse", "cov_rate"]:
         fg = plottor.plot(
             (
-                res.replace({"method": {"EMBP": "EMBP-is"}})
+                res.replace({"method": {"EMBP": "EMBP-bs"}})
                 if metric == "cov_rate"
                 else res.query("method != 'EMBP-sem'")
             ),
@@ -363,7 +364,7 @@ def continue_wo_z():
             col_label=r"The ratio of $X^o$ is {col:.2f}",
             row_label=r"The $\beta_x$ is {row:.1f}",
             hue_order=(
-                ["naive", "xonly", "EMBP-sem", "EMBP-is"]
+                ["naive", "xonly", "EMBP-sem", "EMBP-bs"]
                 if metric == "cov_rate"
                 else ["naive", "xonly", "EMBP"]
             ),
@@ -372,87 +373,139 @@ def continue_wo_z():
         fg.savefig(f"./results/{name}_{metric}.png", pad_inches=0.5)
 
 
+def binary_wo_z():
+    name = "binary_wo_z"
+    res = pd.concat(
+        [
+            load_results(
+                "./results/binary_wo_z_qK100_fix/",
+                methods={
+                    "naive": "naive",
+                    "xonly": "xonly",
+                    "EMBP": "EMBP-lap",
+                },
+            ),
+            load_results(
+                "./results/binary_IS_wo_z_nr200_1/",
+                methods={"EMBP": "EMBP-is"},
+            ),
+            load_results(
+                "./results/binary_IS_wo_z_nr200_2/",
+                methods={"EMBP": "EMBP-is"},
+            ),
+            load_results(
+                "./results/binary_wo_z_qK100_fix_EMBP_sem",
+                methods={"EMBP": "EMBP-lap-sem"},
+            ),
+            load_results(
+                "./results/binary_IS_wo_z_nr200_EMBP_sem_1",
+                methods={"EMBP": "EMBP-is-sem"},
+            ),
+            load_results(
+                "./results/binary_IS_wo_z_nr200_EMBP_sem_2",
+                methods={"EMBP": "EMBP-is-sem"},
+            ),
+        ]
+    )
+
+    res_summ = res.copy()
+    res_summ["bias"] = [
+        f"{a:.4f}±{b:.4f}"
+        for a, b in zip(res_summ["bias"], res_summ["bias_std"])
+    ]
+    res_summ_bias_mse = (
+        res_summ.drop(columns=["datetime", "bias_std", "cov_rate"])
+        .query("method not in ['EMBP-lap-sem', 'EMBP-is-sem']")
+        .set_index(
+            ["beta_x", "x_ratio", "n_sample_per_studies", "method"],
+            drop=True,
+        )
+        .unstack(level="n_sample_per_studies")
+    )
+    res_summ_cov_rate = (
+        res_summ.drop(columns=["datetime", "bias_std", "bias", "mse"])
+        .replace(
+            {"method": {"EMBP-lap": "EMBP-lap-bs", "EMBP-is": "EMBP-is-bs"}}
+        )
+        .set_index(
+            ["beta_x", "x_ratio", "n_sample_per_studies", "method"],
+            drop=True,
+        )
+        .unstack(level="n_sample_per_studies")
+    )
+    with pd.ExcelWriter(f"./results/{name}.xlsx") as writer:
+        res_summ_bias_mse.to_excel(writer, sheet_name="summary_bias_mse")
+        res_summ_cov_rate.to_excel(writer, sheet_name="summary_cov_rate")
+        res.to_excel(writer, sheet_name="raw")
+    print(res_summ_bias_mse.to_string())
+    print(res_summ_cov_rate.to_string())
+
+    # figures
+    # 绘图前记得做如下操作
+    res["x_ratio"] = res["x_ratio"].astype("category")
+    res["bias"] = res["bias"].abs()
+    plottor = BrokenLinePlottor(3, 3, width_pad=1)
+    for metric in ["bias", "mse", "cov_rate"]:
+        fg = plottor.plot(
+            (
+                res.replace(
+                    {
+                        "method": {
+                            "EMBP-lap": "EMBP-lap-bs",
+                            "EMBP-is": "EMBP-is-bs",
+                        }
+                    }
+                )
+                if metric == "cov_rate"
+                else res.query("method not in ['EMBP-lap-sem', 'EMBP-is-sem']")
+            ),
+            x="n_sample_per_studies",
+            y=metric,
+            hue="method",
+            col="x_ratio",
+            row="beta_x",
+            xlabel="The number of samples for each study",
+            ylabel={
+                "bias": "Absolute Mean of Bias",
+                "mse": "Mean Square Error",
+                "cov_rate": "Covarage Rate",
+            }[metric],
+            col_label=r"The ratio of $X^o$ is {col:.2f}",
+            row_label=r"The $\beta_x$ is {row:.1f}",
+            hue_order=(
+                [
+                    "naive",
+                    "xonly",
+                    "EMBP-lap-sem",
+                    "EMBP-lap-bs",
+                    "EMBP-is-sem",
+                    "EMBP-is-bs",
+                ]
+                if metric == "cov_rate"
+                else ["naive", "xonly", "EMBP-lap", "EMBP-is"]
+            ),
+            legend=True,
+        )
+        fg.savefig(f"./results/{name}_{metric}.png", pad_inches=0.5)
+
+
+def application():
+    # read data
+    dat = pd.read_csv(
+        "./experiments/results/BBP-application/ERBB2_simu.csv", index_col=0
+    )
+    print(dat)
+    model = EMBP(outcome_type="binary", ci=True, device="cuda:0")
+    model.fit(
+        dat["X"].values, dat["S"].values, dat["W"].values, dat["Y"].values
+    )
+    print(model.params_)
+
+
 def main():
-    # parser = ArgumentParser()
-    # parser.add_argument("--root", default=["./results/embp/"], nargs="+")
-    # parser.add_argument("--start", default=None)
-    # parser.add_argument("--end", default=None)
-    # parser.add_argument("--save_fn", default=None)
-    # args = parser.parse_args()
-
-    continue_wo_z()
-
-    # res_binary_wo_z = pd.concat(
-    #     [
-    #         load_results(
-    #             "./results/binary_wo_z_qK100_fix/",
-    #             methods={
-    #                 "naive": "naive",
-    #                 "xonly": "xonly",
-    #                 "EMBP": "EMBP-lap",
-    #             },
-    #         ),
-    #         load_results(
-    #             "./results/binary_IS_wo_z_nr200_1/",
-    #             methods={"EMBP": "EMBP-is"},
-    #         ),
-    #         load_results(
-    #             "./results/binary_IS_wo_z_nr200_2/",
-    #             methods={"EMBP": "EMBP-is"},
-    #         ),
-    #     ]
-    # )
-
-    # for name, res in zip(
-    #     ["continue_wo_z", "binary_wo_z"], [res_continue_wo_z, res_binary_wo_z]
-    # ):
-    #     res_summ = res.copy()
-    #     res_summ["bias"] = [
-    #         f"{a:.4f}±{b:.4f}"
-    #         for a, b in zip(res_summ["bias"], res_summ["bias_std"])
-    #     ]
-    #     res_summ = (
-    #         res_summ.drop(columns=["datetime", "bias_std"])
-    #         .set_index(
-    #             ["beta_x", "x_ratio", "n_sample_per_studies", "method"],
-    #             drop=True,
-    #         )
-    #         .unstack(level="n_sample_per_studies")
-    #     )
-    #     with pd.ExcelWriter(f"./results/{name}.xlsx") as writer:
-    #         res_summ.to_excel(writer, sheet_name="summary")
-    #         res.to_excel(writer, sheet_name="raw")
-    #     print(res_summ.to_string())
-
-    #     # figures
-    #     # 绘图前记得做如下操作
-    #     res["x_ratio"] = res["x_ratio"].astype("category")
-    #     res["bias"] = res["bias"].abs()
-    #     plottor = BrokenLinePlottor(3, 3, width_pad=1)
-    #     for metric in ["bias", "mse", "cov_rate"]:
-    #         fg = plottor.plot(
-    #             res,
-    #             x="n_sample_per_studies",
-    #             y=metric,
-    #             hue="method",
-    #             col="x_ratio",
-    #             row="beta_x",
-    #             xlabel="The number of samples for each study",
-    #             ylabel={
-    #                 "bias": "The mean of Bias",
-    #                 "mse": "MSE",
-    #                 "cov_rate": "The Covarage Rate",
-    #             }[metric],
-    #             col_label=r"The ratio of $X^o$ is {col:.2f}",
-    #             row_label=r"The $\beta_x$ is {row:.1f}",
-    #             hue_order=(
-    #                 ["naive", "xonly", "EMBP"]
-    #                 if name.startswith("continue")
-    #                 else ["naive", "xonly", "EMBP-is", "EMBP-lap"]
-    #             ),
-    #             legend=True,
-    #         )
-    #         fg.savefig(f"./results/{name}_{metric}.png", pad_inches=0.5)
+    # continue_wo_z()
+    # binary_wo_z()
+    application()
 
 
 if __name__ == "__main__":
