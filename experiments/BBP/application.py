@@ -26,15 +26,16 @@ def main():
     os.makedirs(save_root, exist_ok=True)
 
     # read data
-    dat = pd.read_csv(osp.join(save_root, "BRCA1_simu.csv"), index_col=0)
+    dat = pd.read_csv("./data/ERBB2_simu.csv", index_col=0)
+    dat["S"] = dat["S"].astype(int)
 
     # fit model
     model = BBP()
 
-    model.fit(dat)
-    baye_res = model.summary()
-    print(baye_res)
-    baye_res.to_csv(osp.join(save_root, "BRCA1_res.csv"))
+    fit_res = model.fit(dat)
+    summary_res = fit_res.summary()
+    print(summary_res)
+    summary_res.to_csv(osp.join(save_root, "ERBB2_res.csv"))
 
 
 if __name__ == "__main__":

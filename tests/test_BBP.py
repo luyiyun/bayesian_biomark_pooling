@@ -6,7 +6,7 @@ from bayesian_biomarker_pooling import BBP
 
 def test_right_literal():
     with pytest.raises(AssertionError):
-        BBP(prior_betax="normal")
+        BBP(prior_betax_std="normal")
     with pytest.raises(AssertionError):
         BBP(prior_sigma_ws="normal")
     with pytest.raises(AssertionError):

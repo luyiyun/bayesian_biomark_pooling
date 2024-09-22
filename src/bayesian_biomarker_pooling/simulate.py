@@ -2,14 +2,14 @@ import logging
 import os
 import hashlib
 from collections import abc
-
 from typing import Literal, Optional, Sequence, Union, Tuple, Dict
 
 import numpy as np
 import pandas as pd
-
-# import scipy.stats as ss
 from scipy import integrate, optimize, special, stats
+
+
+logger = logging.getLogger("main.simulate")
 
 
 def prepare_params_source_heterogeneity(
@@ -72,38 +72,41 @@ class Simulator:
 
     def __init__(
         self,
-        mu_x: float = 0.0,
-        sigma2_x: float = 1.0,
+        # parameters
         beta_x: float = 1.0,
         beta_z: Optional[Union[float, Sequence[float]]] = None,
-        mu_z: Union[float, Sequence[float]] = 0.0,
-        sigma_z: Union[float, Sequence[float]] = 1.0,
-        prevalence: Optional[Union[float, Sequence[float]]] = None,
         beta_0: Union[float, Sequence[float]] = 1.0,
+        prevalence: Optional[Union[float, Sequence[float]]] = None,
         a: Sequence[float] = [-3, 1, -1, 3],
         b: Sequence[float] = [0.5, 0.75, 1.25, 1.5],
         sigma2_e: Union[float, Sequence[float]] = 1.0,
         sigma2_y: Union[float, Sequence[float]] = 1.0,
+        # distributions
+        mu_x: float = 0.0,
+        sigma2_x: float = 1.0,
+        mu_z: Union[float, Sequence[float]] = 0.0,
+        sigma_z: Union[float, Sequence[float]] = 1.0,
+        # number of samples
         n_sample_per_studies: Union[int, Sequence[int]] = 100,
         n_knowX_per_studies: Union[int, Sequence[int]] = 10,
         n_knowX_balance: bool = False,
+        # others
         direction: Literal["x->w", "w->x"] = "x->w",
         type_outcome: Literal["binary", "continue"] = "binary",
     ) -> None:
+        """
+        n_knowX_balance: 保证存在x的样本中y=1 / y=0的比例与所有样本y=1 / y=0的比例相同
+        """
         assert direction in ["x->w", "w->x"]
         assert type_outcome in ["binary", "continue"]
-        if type_outcome == "continue":
+        if type_outcome != "binary":
+            # 如果不是binary, 则只能直接指定beta0,而不是通过prevalence来间接确定beta0
             assert beta_0 is not None
+            assert not n_knowX_balance, "n_knowX_balance=True only when binary"
         if beta_z is not None and isinstance(mu_z, abc.Sequence):
             assert len(beta_z) == len(mu_z)
         if beta_z is not None and isinstance(sigma_z, abc.Sequence):
             assert len(beta_z) == len(mu_z)
-        if type_outcome == "binary":
-            assert (prevalence is None and beta_0 is not None) or (
-                prevalence is not None and beta_0 is None
-            ), "can not set prevalence and beta0 simultaneously."
-
-        logger = logging.getLogger("main.simulate")
 
         # 如果指定了prevalence，则使用prevalence来计算beta0，
         # prevalence也可以指定多个，来对应多个beta0
@@ -276,17 +279,20 @@ class Simulator:
                 raise ValueError("nsamples(%d) < nKnowX(%d)" % (ni, nxi))
             elif ni > nxi:
                 if self._parameters["n_knowX_balance"]:
-                    n_nan = ni - nxi
-                    n_nan_0 = n_nan // 2
-                    n_nan_1 = n_nan - n_nan_0
                     Yi = Y[start:end]
-                    nan_ind0 = rng.choice(
-                        np.nonzero(Yi == 0)[0], n_nan_0, replace=False
-                    )
+                    y1_ind = np.nonzero(Yi == 1)[0]
+                    y0_ind = np.nonzero(Yi == 0)[0]
                     nan_ind1 = rng.choice(
-                        np.nonzero(Yi == 1)[0], n_nan_1, replace=False
+                        y1_ind,
+                        int((ni - nxi) / ni * len(y1_ind)),
+                        replace=False,
                     )
-                    nan_ind = np.concatenate([nan_ind0, nan_ind1])
+                    nan_ind0 = rng.choice(
+                        y0_ind,
+                        int((ni - nxi) / ni * len(y0_ind)),
+                        replace=False,
+                    )
+                    nan_ind = np.concatenate([nan_ind0, nan_ind1]) + start
                 else:
                     nan_ind = rng.choice(
                         np.arange(start, end), ni - nxi, replace=False

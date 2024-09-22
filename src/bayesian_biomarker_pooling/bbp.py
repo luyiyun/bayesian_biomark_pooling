@@ -1,297 +1,82 @@
-from typing import Literal, Optional, Tuple, Union, List
+from typing import Literal, Optional, Tuple, Union, List, Sequence
 
 import numpy as np
 import pandas as pd
 import pymc as pm
 import arviz as az
+from pymc.backends.base import MultiTrace
+
+from .base import BiomarkerPoolBase, check_data
 
 
-all_hidden_variables: List[str] = [
-    "betax",
-    "mu_sigma_w",
-    "sigma_sigma_w",
-    "simga_ws",
-    "a",
-    "b",
-    "beta0",
-    "sigma_a",
-    "sigma_b",
-    "sigma_0",
-    "a_s",
-    "b_s",
-    "beta0s",
-    "mu_x",
-    "sigma_x",
-    "X_no_obs",
-]
+"""
+Z --> Y <-- X --> W
+TODO:
+2. Z -?-> W;
+3. binary, continue, and survival outcomes;
+4. +multiple imputation.
+"""
 
 
-def set_prior(
-    n_studies: int,
-    prior_betax: Literal["flat", "standard_normal"],
-    prior_sigma_ws: Literal["gamma", "inv_gamma"],
-    prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-    std_prior_a: float = 1.0,
-    std_prior_b: float = 1.0,
-    std_prior_beta0: float = 1.0,
-) -> Tuple[pm.Distribution]:
+class BBPResults:
 
-    assert prior_betax in ["flat", "standard_normal"]
-    assert prior_sigma_ws in ["gamma", "inv_gamma"]
-    assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
+    all_hidden_variables: List[str] = [
+        "betax",
+        "mu_sigma_w",
+        "sigma_sigma_w",
+        "simga_ws",
+        "a",
+        "b",
+        "beta0",
+        "sigma_a",
+        "sigma_b",
+        "sigma_0",
+        "a_s",
+        "b_s",
+        "beta0s",
+        "mu_x",
+        "sigma_x",
+        "X_no_obs",
+        "betaz",
+    ]
 
-    betax = (
-        pm.Flat("betax")
-        if prior_betax == "flat"
-        else pm.Normal("betax", mu=0, sigma=1)
-    )
+    def __init__(
+        self,
+        model: pm.Model,
+        res_mcmc: Union[az.InferenceData, MultiTrace, pm.Approximation],
+    ) -> None:
+        self.model_ = model
+        self.res_mcmc_ = res_mcmc
 
-    mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
-    sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
-    if prior_sigma_ws == "gamma":
-        sigma_ws = pm.Gamma(
-            "sigma_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, size=n_studies
-        )
-    elif prior_sigma_ws == "inv_gamma":
-        sigma2_ws = pm.InverseGamma(
-            "sigma2_ws",
-            mu=mu_sigma_w,
-            sigma=sigma_sigma_w,
-            size=n_studies,
-        )
-        sigma_ws = pm.Deterministic("sigma_ws", pm.math.sqrt(sigma2_ws))
+    def summary(
+        self,
+        var_names: Optional[Tuple[str]] = ("betax",),
+    ) -> pd.DataFrame:
 
-    a = pm.Normal("a", 0, std_prior_a)
-    b = pm.Normal("b", 0, std_prior_b)
-    beta0 = pm.Normal("beta0", 0, std_prior_beta0)
-    if prior_sigma_ab0 == "half_cauchy":
-        sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-        sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-        sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
-    elif prior_sigma_ab0 == "half_flat":
-        sigma_a = pm.HalfFlat("sigma_a")
-        sigma_b = pm.HalfFlat("sigma_b")
-        sigma_0 = pm.HalfFlat("sigma_0")
-    a_s = pm.Normal("a_s", a, sigma_a, size=n_studies)
-    b_s = pm.Normal("b_s", b, sigma_b, size=n_studies)
-    beta0s = pm.Normal("beta0s", beta0, sigma_0, size=n_studies)
-
-    return a_s, b_s, sigma_ws, beta0s, betax
-
-
-def create_model(
-    n_studies: int,
-    n_xKnow: int,
-    n_xUnKnow: int,
-    X_Know: np.ndarray,
-    XWY_xKnow: List[Tuple[np.ndarray, np.ndarray, np.ndarray] | None],
-    WY_xUnKnow: List[Tuple[np.ndarray, np.ndarray, np.ndarray] | None],
-    prior_betax: Literal["flat", "standard_normal"] = "standard_normal",
-    prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
-    prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-    std_prior_a: float = 1.0,
-    std_prior_b: float = 1.0,
-    std_prior_beta0: float = 1.0,
-    std_prior_mu_x: float = 10.0,
-    mean_prior_sigma_x: float = 1.0,
-    sigma_prior_sigma_x: float = 1.0,
-):
-
-    with pm.Model() as model:
-        (
-            a_s,
-            b_s,
-            sigma_ws,
-            beta0s,
-            betax,
-        ) = set_prior(
-            n_studies,
-            prior_betax,
-            prior_sigma_ws,
-            prior_sigma_ab0,
-            std_prior_a,
-            std_prior_b,
-            std_prior_beta0,
+        str_all_hidden_variables = ",".join(self.all_hidden_variables)
+        assert (
+            len(set(var_names).difference(self.all_hidden_variables)) == 0
+        ), (
+            "The element of var_names must "
+            f"be one of [{str_all_hidden_variables}]"
         )
 
-        mu_x = pm.Normal("mu_x", 0, std_prior_mu_x)
-        beta = (
-            mean_prior_sigma_x
-            + np.sqrt(mean_prior_sigma_x + sigma_prior_sigma_x**2)
-        ) / (2 * sigma_prior_sigma_x**2)
-        alpha = mean_prior_sigma_x * beta + 1
-        sigma_x = pm.Gamma("sigma_x", alpha=alpha, beta=beta)
-
-        if beta0s.ndim == 0:
-            beta0s = [beta0s] * n_studies
-        if sigma_ws.ndim == 0:
-            sigma_ws = [sigma_ws] * n_studies
-
-            # for samples that can not see X
-            X_no_obs = pm.Normal(
-                "X_no_obs",
-                mu_x,
-                sigma_x,
-                size=n_xUnKnow,
-            )
-            start = 0
-            for i, WY in enumerate(WY_xUnKnow):
-                if WY is None:
-                    continue
-                W, Y = WY
-                end = start + W.shape[0]
-                X_no_obs_i = X_no_obs[start:end]
-                pm.Normal(
-                    "W_%d_no_obs_X" % i,
-                    a_s[i] + b_s[i] * X_no_obs_i,
-                    sigma_ws[i],
-                    observed=W,
-                )
-                pm.Bernoulli(
-                    "Y_%d_no_obs_X" % i,
-                    logit_p=beta0s[i] + betax * X_no_obs_i,
-                    observed=Y,
-                )
-                start = end
-
-            # for samples that can see X
-            pm.Normal("X_obs", mu_x, sigma_x, observed=X_Know)
-            for i, XWY in enumerate(XWY_xKnow):
-                if XWY is None:
-                    continue
-                X, W, Y = XWY
-                pm.Normal(
-                    "W_%d_obs_X" % i,
-                    a_s[i] + b_s[i] * X,
-                    sigma_ws[i],
-                    observed=W,
-                )
-                pm.Bernoulli(
-                    "Y_%d_obs_X" % i,
-                    logit_p=beta0s[i] + betax * X,
-                    observed=Y,
-                )
-
-    return model
-
-
-def train_model(
-    model: pm.Model,
-    solver: Literal["pymc", "vi"] = "pymc",
-    nsample: int = 1000,
-    ntunes: int = 1000,
-    nchains: int = 4,
-    pbar: bool = True,
-    seed: Optional[int] = None,
-) -> Union[pm.Approximation, az.InferenceData]:
-    with model:
-        if solver == "vi":
-            res = pm.fit(progressbar=pbar, random_seed=seed)
-        else:
-            res = pm.sample(
-                nsample,
-                tune=ntunes,
-                chains=nchains,
-                cores=nchains,
-                progressbar=pbar,
-                random_seed=list(range(seed, seed + nchains)),
-                nuts_sampler=solver,
-            )
-    return res
-
-
-def summary_res(
-    res: Union[pm.Approximation, az.InferenceData],
-    solver: Literal["pymc", "vi"] = "pymc",
-    var_names: Optional[Tuple[str]] = ("betax",),
-    return_obj: Literal["raw", "point_interval"] = "point_interval",
-) -> pd.DataFrame:
-    str_all_hidden_variables = ",".join(all_hidden_variables)
-    assert (
-        len(set(var_names).difference(all_hidden_variables)) == 0
-    ), f"The element of var_names must be one of [{str_all_hidden_variables}]"
-    assert return_obj in ["raw", "point_interval"]
-
-    if return_obj == "raw":
-        return res
-
-    if solver != "vi":
         res_df = az.summary(
-            res,
+            self.res_mcmc_,
             hdi_prob=0.95,
             kind="stats",
             var_names=list(var_names),
         )
-    else:
-        # TODO: 有一些param是log__之后的
-        nparam = res.ndim
-        param_names = [None] * nparam
-        # log_slices = []
-        if var_names is not None:
-            post_mu = res.mean.eval()
-            post_sd = res.std.eval()
-            res_df = []
-            for vari in var_names:
-                if vari in res.ordering:
-                    pass
-                elif (vari + "_log__") in res.ordering:
-                    vari = vari + "_log__"
-                else:
-                    raise KeyError(
-                        "%s or %s_log__ not in approximation.ordering."
-                        % (vari, vari)
-                    )
-                slice_ = res.ordering[vari][1]
-                post_mu_i = post_mu[slice_]
-                post_sd_i = post_sd[slice_]
-                n = len(post_mu_i)
-                res_df.append(
-                    pd.DataFrame(
-                        {"mean": post_mu_i, "sd": post_sd_i},
-                        index=(
-                            [vari]
-                            if n == 1
-                            else ["%s[%d]" % (vari, i) for i in range(n)]
-                        ),
-                    )
-                )
-            res_df = pd.concat(res_df)
-        else:
-            for param, (_, slice_, _, _) in res.ordering.items():
-                if slice_.step is not None:
-                    raise NotImplementedError
-                if slice_.start >= nparam:
-                    continue
-                elif slice_.stop > nparam:
-                    slice_ = slice(slice_.start, nparam)
-                n = slice_.stop - slice_.start
-                # if param.endswith("_log__"):
-                #     param = param[:-6]
-                #     log_slices.append(slice_)
-                if n > 1:
-                    param_names[slice_] = [
-                        "%s[%d]" % (param, i) for i in range(n)
-                    ]
-                else:
-                    param_names[slice_] = [param] * n
-            res_df = pd.DataFrame(
-                {
-                    "mean": res.mean.eval(),
-                    "sd": res.std.eval(),
-                },
-                index=param_names,
-            )
-        res_df["hdi_2.5%"] = res_df["mean"] - 1.96 * res_df["sd"]
-        res_df["hdi_97.5%"] = res_df["mean"] + 1.96 * res_df["sd"]
 
-    return res_df
+        return res_df
 
 
-class BBP:
+class BBP(BiomarkerPoolBase):
 
     def __init__(
         self,
-        prior_betax: Literal["flat", "standard_normal"] = "standard_normal",
+        prior_betax_std: Union[Literal["inf"], float] = "inf",
+        prior_betaz_std: Union[Literal["inf"], float] = "inf",
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         std_prior_a: float = 1.0,
@@ -300,20 +85,27 @@ class BBP:
         std_prior_mu_x: float = 10.0,
         mean_prior_sigma_x: float = 1.0,
         sigma_prior_sigma_x: float = 1.0,
-        solver: Literal["pymc", "vi"] = "pymc",
+        solver: Literal["pymc", "vi", "blackjax"] = "pymc",
         nsample: int = 1000,
         ntunes: int = 1000,
         nchains: int = 4,
         pbar: bool = True,
         seed: int = 0,
+        target_accept: Optional[float] = None,
     ) -> None:
 
-        assert prior_betax in ["flat", "standard_normal"]
+        assert prior_betax_std == "inf" or (
+            isinstance(prior_betax_std, float) and prior_betax_std > 0
+        )
+        assert prior_betaz_std == "inf" or (
+            isinstance(prior_betaz_std, float) and prior_betaz_std > 0
+        )
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
         assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
-        assert solver in ["pymc", "vi"]
+        assert solver in ["pymc", "vi", "blackjax"]
 
-        self.prior_betax_ = prior_betax
+        self.prior_betax_std_ = prior_betax_std
+        self.prior_betaz_std_ = prior_betaz_std
         self.prior_sigma_ws_ = prior_sigma_ws
         self.prior_sigma_ab0_ = prior_sigma_ab0
         self.std_prior_a_ = std_prior_a
@@ -328,6 +120,7 @@ class BBP:
         self.nchains_ = nchains
         self.pbar_ = pbar
         self.seed_ = seed
+        self.target_accept_ = target_accept
 
     def fit(
         self,
@@ -336,65 +129,188 @@ class BBP:
         S_col: str = "S",
         W_col: str = "W",
         Y_col: str = "Y",
-    ) -> None:
+        Z_col: Optional[Union[str, Sequence[str]]] = None,
+    ) -> BBPResults:
 
-        # 把dataframe都处理好后送入create_model方法来创建pm.Model
-        ind_studies = df[S_col].unique()
-        ind_xKnow = df[X_col].notna()
-        ind_xUnKnow = df[X_col].isna()
-        n_studies = int(ind_studies.shape[0])
-        n_xKnow = int(ind_xKnow.sum())
-        n_xUnKnow = int(ind_xUnKnow.sum())
+        X, S, W, Y, Z = check_data(df, X_col, S_col, W_col, Y_col, Z_col)
 
-        X_Know = df.loc[ind_xKnow, X_col].values
+        ##################################################################
+        # split the data
+        ##################################################################
+        unique_S = np.unique(S)
+        is_m = pd.isnull(X)
+        is_o = np.logical_not(is_m)
 
-        XWY_xKnow, WY_xUnKnow = [], []
-        for si in ind_studies:
-            dfi = df.loc[(df[S_col] == si) & (ind_xKnow), :]
-            if dfi.shape[0] == 0:
-                XWY_xKnow.append(None)
+        # n_S = len(unique_S)
+        # n_xKnow = int(is_o.sum())
+        n_xUnKnow = int(is_m.sum())
+
+        X_Know = X[is_o]
+
+        XWYZ_xKnow, WYZ_xUnKnow = {}, {}
+        for si in unique_S:
+            is_o_si = (S == si) & is_o
+            if is_o_si.sum() == 0:
+                XWYZ_xKnow[si] = None
             else:
-                XWY_xKnow.append(
-                    (dfi[X_col].values, dfi[W_col].values, dfi[Y_col].values)
+                item = {"X": X[is_o_si], "W": W[is_o_si], "Y": Y[is_o_si]}
+                if Z is not None:
+                    item["Z"] = Z[is_o_si, :]
+                XWYZ_xKnow[si] = item
+
+            is_m_si = (S == si) & is_m
+            if is_m_si.sum() == 0:
+                WYZ_xUnKnow[si] = None
+            else:
+                item = {"X": X[is_m_si], "W": W[is_m_si], "Y": Y[is_m_si]}
+                if Z is not None:
+                    item["Z"] = Z[is_m_si, :]
+                WYZ_xUnKnow[si] = item
+
+        ##################################################################
+        # create pymc model
+        ##################################################################
+        coords = {"S": unique_S}
+        if Z is not None:
+            coords["Z"] = [Z_col] if isinstance(Z_col, str) else Z_col
+
+        with pm.Model(coords=coords) as model:
+            # ============= 1. set prior =============
+            # 1.1 betax
+            betax = (
+                pm.Flat("betax")
+                if self.prior_betax_std_ == "inf"
+                else pm.Normal("betax", mu=0, sigma=self.prior_betax_std_)
+            )
+            # 1.2 sigma_w_s
+            mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
+            sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
+            if self.prior_sigma_ws_ == "gamma":
+                sigma_ws = pm.Gamma(
+                    "sigma_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
                 )
-            dfi = df.loc[(df[S_col] == si) & (ind_xUnKnow), :]
-            if dfi.shape[0] == 0:
-                WY_xUnKnow.append(None)
+            elif self.prior_sigma_ws_ == "inv_gamma":
+                sigma2_ws = pm.InverseGamma(
+                    "sigma2_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
+                )
+                sigma_ws = pm.Deterministic(
+                    "sigma_ws", pm.math.sqrt(sigma2_ws)
+                )
+            # 1.3 a_s, b_s, beta0_s
+            a = pm.Normal("a", 0, self.std_prior_a_)
+            b = pm.Normal("b", 0, self.std_prior_b_)
+            beta0 = pm.Normal("beta0", 0, self.std_prior_beta0_)
+            if self.prior_sigma_ab0_ == "half_cauchy":
+                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
+                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
+                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
+            elif self.prior_sigma_ab0_ == "half_flat":
+                sigma_a = pm.HalfFlat("sigma_a")
+                sigma_b = pm.HalfFlat("sigma_b")
+                sigma_0 = pm.HalfFlat("sigma_0")
+            a_s = pm.Normal("a_s", a, sigma_a, dims="S")
+            b_s = pm.Normal("b_s", b, sigma_b, dims="S")
+            beta0s = pm.Normal("beta0s", beta0, sigma_0, dims="S")
+            # 1.4 mu_x, sigma_x
+            mu_x = pm.Normal("mu_x", 0, self.std_prior_mu_x_)
+            # convert the mean-sigma format to alpha-beta format
+            beta = (
+                self.mean_prior_sigma_x_
+                + np.sqrt(
+                    self.mean_prior_sigma_x_ + self.sigma_prior_sigma_x_**2
+                )
+            ) / (2 * self.sigma_prior_sigma_x_**2)
+            alpha = self.mean_prior_sigma_x_ * beta + 1
+            sigma_x = pm.Gamma("sigma_x", alpha=alpha, beta=beta)
+            # 1.5 beta_z
+            if Z is not None:
+                beta_z = (
+                    pm.Flat("betaz")
+                    if self.prior_betaz_std_ == "inf"
+                    else pm.Normal(
+                        "betaz", mu=0, sigma=self.prior_betaz_std_, dims="Z"
+                    )
+                )
+
+            # if beta0s.ndim == 0:
+            #     beta0s = [beta0s] * n_S
+            # if sigma_ws.ndim == 0:
+            #     sigma_ws = [sigma_ws] * n_S
+
+            # ============= 2. set data generation model =============
+            # for samples that can not see X
+            X_no_obs = pm.Normal(
+                "X_no_obs",
+                mu_x,
+                sigma_x,
+                size=n_xUnKnow,
+            )
+            start = 0
+            for i, (si, data_dict) in enumerate(WYZ_xUnKnow.items()):
+                if data_dict is None:
+                    continue
+                Wi, Yi = data_dict["W"], data_dict["Y"]
+                end = start + Wi.shape[0]
+                X_no_obs_i = X_no_obs[start:end]
+                mu_W_i = a_s[i] + b_s[i] * X_no_obs_i  # 只接受iloc索引
+                # TODO: Z是否会影响Y?
+                # if Z is not None:
+                #     mu_Y_i += beta_z * Z
+                pm.Normal(
+                    f"W_{si}_no_obs_X",
+                    mu_W_i,
+                    sigma_ws[i],
+                    observed=Wi,
+                )
+                zpred = (
+                    0.0 if Z is None else (beta_z * data_dict["Z"]).sum(axis=1)
+                )
+                pred = beta0s[i] + betax * X_no_obs_i + zpred
+                pm.Bernoulli(
+                    f"Y_{si}_no_obs_X",
+                    logit_p=pred,
+                    observed=Yi,
+                )
+                start = end
+
+            # for samples that can see X
+            pm.Normal("X_obs", mu_x, sigma_x, observed=X_Know)
+            for i, (si, data_dict) in enumerate(XWYZ_xKnow.items()):
+                if data_dict is None:
+                    continue
+                Xi, Wi, Yi = data_dict["X"], data_dict["W"], data_dict["Y"]
+                pm.Normal(
+                    f"W_{si}_obs_X",
+                    a_s[i] + b_s[i] * Xi,
+                    sigma_ws[i],
+                    observed=Wi,
+                )
+                zpred = (
+                    0 if Z is None else (beta_z * data_dict["Z"]).sum(axis=1)
+                )
+                pred = beta0s[i] + betax * Xi + zpred
+                pm.Bernoulli(
+                    f"Y_{si}_obs_X",
+                    logit_p=pred,
+                    observed=Yi,
+                )
+
+            # ============= 3. MCMC sampling =============
+            if self.solver_ == "vi":
+                res = pm.fit(progressbar=self.pbar_, random_seed=self.seed_)
             else:
-                WY_xUnKnow.append((dfi[W_col].values, dfi[Y_col].values))
+                kwargs = dict(
+                    tune=self.ntunes_,
+                    chains=self.nchains_,
+                    cores=self.nchains_,
+                    progressbar=self.pbar_,
+                    random_seed=list(
+                        range(self.seed_, self.seed_ + self.nchains_)
+                    ),
+                    nuts_sampler=self.solver_,
+                )
+                if self.target_accept_ is not None:
+                    kwargs["target_accept"] = self.target_accept_
+                res = pm.sample(self.nsample_, **kwargs)
 
-        self.model_ = create_model(
-            n_studies,
-            n_xKnow,
-            n_xUnKnow,
-            X_Know,
-            XWY_xKnow,
-            WY_xUnKnow,
-            self.prior_betax_,
-            self.prior_sigma_ws_,
-            self.prior_sigma_ab0_,
-            self.std_prior_a_,
-            self.std_prior_b_,
-            self.std_prior_beta0_,
-            self.std_prior_mu_x_,
-            self.mean_prior_sigma_x_,
-            self.sigma_prior_sigma_x_,
-        )
-
-        self.res_ = train_model(
-            self.model_,
-            self.solver_,
-            self.nsample_,
-            self.ntunes_,
-            self.nchains_,
-            self.pbar_,
-            self.seed_,
-        )
-
-    def summary(
-        self,
-        var_names: Optional[Tuple[str]] = ("betax",),
-        return_obj: Literal["raw", "point_interval"] = "point_interval",
-    ) -> Union[pm.Approximation, az.InferenceData, pd.DataFrame]:
-
-        return summary_res(self.res_, self.solver_, var_names, return_obj)
+        return BBPResults(model, res)

@@ -122,7 +122,7 @@
 #  a, b, sigma2e are given explicit values
 #
 ##################################################################################################################################################
-OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
+# OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
 
 # save_root=./results/results10-bayes
 # python ./main.py --tasks all $OTHERS --nKnowX 10 --sigma2x 10 --sigma2e 10 --prior_betax flat --save_root $save_root
@@ -159,12 +159,37 @@ OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat
 # python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes
 
 
-save_root=./results/results13
-python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root ${save_root}-bayes3
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes3
+# save_root=./results/results13
+# python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax normal --prior_a_std 1.0 --prior_b_std 1.0 --prior_beta0_std 1.0 --save_root ${save_root}-bayes3
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes3
 
-python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax normal --save_root ${save_root}-bayes2
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes2
+# python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax normal --save_root ${save_root}-bayes2
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes2
 
-python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax flat --save_root ${save_root}-bayes
-python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes
+# python ./main.py --tasks all $OTHERS --nKnowX 5 --prior_betax flat --save_root ${save_root}-bayes
+# python ./main.py --tasks summarize --summarize_save_fn summ.xlsx --save_root ${save_root}-bayes
+
+
+##################################################################################################################################################
+#
+# NEW: generation data
+#
+##################################################################################################################################################
+# OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
+
+# test without Z
+# python ./simulate_data.py --nSamples 100 --n_knowX_balance --nrepeat 100 \
+#     --nKnowX 10 --prevalence 0.5 --OR 3.0 --save_prefix prev05_OR3_X10_sigx1_sige1
+# python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax \
+#     --save_prefix noinfo_prior --prior_betax_std inf  # best
+# python ./run_simulation.py --target_data ./data/prev05_OR3_X10_sigx1_sige1*.h5 --ncores 20 --solver blackjax \
+#     --save_prefix weak_prior --prior_betax_std 100
+
+
+# test with Z
+# python ./simulate_data.py --nSamples 100 --n_knowX_balance --nrepeat 100 \
+#     --nKnowX 10 --prevalence 0.5 --OR 3.0 --betaz 1.0 1.5 2.0  --save_prefix prev05_OR3_X10_sigx1_sige1_Z3
+python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1_Z3*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+    --save_prefix noinfo_prior --prior_betax_std inf --prior_betaz_std inf
+# python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1_Z3*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+#     --save_prefix weak_prior --prior_betax_std 100 --prior_betaz_std 100

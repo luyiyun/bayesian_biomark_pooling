@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 # -------------------------------- project --------------------------------
 [project]
 name = "bayesian_biomarker_pooling"
-version = "0.1.1"
+version = "0.2.1"
 authors = [{ name = "Rong Zhiwei", email = "18845728185@163.com" }]
 license = { file = "LICENSE" }
 description = "A package for integrated analysis of biomarker clinical trial data."
@@ -17,7 +17,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["pymc>=5.10", "numpy>=1.26.2", "scipy>=1.11.4", "pandas>=2.1.1"]
+dependencies = ["pymc>=5.10", "numpy>=1.26.2", "scipy>=1.11.4", "pandas>=2.1.1", "blackjax>=1.2.3"]
 [project.urls]
 Homepage = "https://github.com/luyiyun/bayesian_biomark_pooling"
 Issues = "https://github.com/luyiyun/bayesian_biomark_pooling/issues"
@@ -34,6 +34,8 @@ develop = [
     "statsmodels>=0.14.1",
     "build",
     "pytest",
+    "tables",
+    "ipykernel",
 ]
 test = ["pytest"]
 

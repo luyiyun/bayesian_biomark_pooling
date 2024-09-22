@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple, Union, Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,11 +10,12 @@ class BiomarkerPoolBase:
         raise NotImplementedError
 
     def fit(
-        X: np.ndarray,
-        S: np.ndarray,
-        W: np.ndarray,
-        Y: np.ndarray,
-        Z: Optional[np.ndarray] = None,
+        df: pd.DataFrame,
+        X_col: str = "X",
+        S_col: str = "S",
+        W_col: str = "W",
+        Y_col: str = "Y",
+        Z_col: Optional[Union[str, Sequence[str]]] = None,
     ) -> None:
         raise NotImplementedError
 
@@ -22,19 +23,41 @@ class BiomarkerPoolBase:
         raise NotImplementedError
 
 
-def check_split_data(
+def check_data(
+    df: pd.DataFrame,
+    X_col: str = "X",
+    S_col: str = "S",
+    W_col: str = "W",
+    Y_col: str = "Y",
+    Z_col: Optional[Union[str, Sequence[str]]] = None,
+) -> Tuple[
+    np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]
+]:
+    X, S, W, Y = (
+        df[X_col].values,
+        df[S_col].values,
+        df[W_col].values,
+        df[Y_col].values,
+    )
+
+    if Z_col is not None:
+        Z = df[Z_col].values
+        assert Z.ndim in (1, 2)
+        if Z.ndim == 1:
+            Z = Z[:, None]
+    else:
+        Z = None
+
+    return X, S, W, Y, Z
+
+
+def split_data(
     X: np.ndarray,
     S: np.ndarray,
     W: np.ndarray,
     Y: np.ndarray,
     Z: Optional[np.ndarray] = None,
 ) -> Dict:
-    for arr in [X, S, W, Y]:
-        assert arr.ndim == 1
-    assert X.shape[0] == S.shape[0] == W.shape[0] == Y.shape[0]
-    if Z is not None:
-        assert Z.ndim == 2
-        assert Z.shape[0] == X.shape[0]
 
     studies, ind_s_inv = np.unique(S, return_inverse=True)
     is_m = pd.isnull(X)
@@ -53,7 +76,7 @@ def check_split_data(
         else:
             item = [ind_si, X[ind_si], W[ind_si], Y[ind_si], None]
             if Z is not None:
-                item[-1] = (Z[ind_si, :],)
+                item[-1] = Z[ind_si, :]
             XWYZ_xKnow.append(item)
 
         ind_si_n = np.nonzero((S == si) & is_m)[0]

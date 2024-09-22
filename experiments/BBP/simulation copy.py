@@ -23,13 +23,13 @@ logger_pymc.setLevel(logging.ERROR)
 logger_simu = logging.getLogger("main.simulate")
 logger_simu.setLevel(logging.ERROR)
 
-logger_main = logging.getLogger("main")
-logger_main.setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 ch = logging.StreamHandler()
 ch.setLevel(logging.DEBUG)
 formatter = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(message)s")
 ch.setFormatter(formatter)
-logger_main.addHandler(ch)
+logger.addHandler(ch)
 
 
 def evaluate(
@@ -237,7 +237,7 @@ class Trials:
         nrepeat = nrepeat if nrepeat is not None else self._nrepeat
         ncores = ncores if ncores is not None else self._ncores
         res_simu, res_anal, res_eval = [], [], []
-        logger_main.info("Task name: %s" % self._trial_name)
+        logger.info("Task name: %s" % self._trial_name)
         if ncores <= 1:
             for i in tqdm(range(nrepeat), desc="Pipeline: "):
                 (
@@ -256,7 +256,7 @@ class Trials:
                     for fn in os.listdir(cache_dir):
                         msg = "remove pytensor cache: %s" % fn
                         if bar is None:
-                            logger_main.info(msg)
+                            logger.info(msg)
                         else:
                             bar.write(msg)
                         shutil.rmtree(osp.join(cache_dir, fn))
@@ -360,27 +360,25 @@ def main():
     parser.add_argument(
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
-    parser.add_argument("--summarize_target_pattern", type=str, default=None)
-    parser.add_argument("--summarize_save_fn", type=str, default=None)
-
+    # parser.add_argument("--summarize_target_pattern", type=str, default=None)
+    # parser.add_argument("--summarize_save_fn", type=str, default=None)
     parser.add_argument("--nrepeat", type=int, default=10)
     parser.add_argument("--ncores", type=int, default=1)
 
-    # simulation settings
-    parser.add_argument(
-        "--sample_studies",
-        action="store_true",
-        help=(
-            "if set sample_studies, simulator will sample a, b and sigma2e "
-            "from normal and inverse gamma distributions."
-        ),
-    )
-    parser.add_argument(
-        "--prevalence", type=float, nargs="+", default=[0.05, 0.25, 0.50]
-    )
-    parser.add_argument(
-        "--OR", type=float, nargs="+", default=[1.25, 1.5, 1.75, 2, 2.25, 2.5]
-    )
+    # ================ simulation settings ================
+    # parser.add_argument(
+    #     "--sample_studies",
+    #     action="store_true",
+    #     help=(
+    #         "if set sample_studies, simulator will sample a, b and sigma2e "
+    #         "from normal and inverse gamma distributions."
+    #     ),
+    # )
+    parser.add_argument("--prevalence", type=float, default=0.50)
+    parser.add_argument("--beta0", type=float, default=0.0)
+    parser.add_argument("--betax", type=float, default=1.0)
+    parser.add_argument("--OR", type=float, default=None)
+
     parser.add_argument("--sigma2x", type=float, default=1.0)
     parser.add_argument("--sigma2e", type=float, nargs="+", default=[1.0])
     parser.add_argument("--a", type=float, nargs="+", default=[-3, 1, -1, 3])
@@ -404,7 +402,7 @@ def main():
         ),
     )
 
-    # bayesian inference settings
+    # ================ bayesian inference settings ================
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
@@ -431,19 +429,29 @@ def main():
     )
     parser.add_argument("--ndraws", type=int, default=1000)
     parser.add_argument("--ntunes", type=int, default=1000)
+
     args = parser.parse_args()
 
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
+    if args.OR is not None and args.betax is not None:
+        logger.info(
+            "OR and betax are set simultaneously, "
+            f"use OR={args.OR}, betax={np.log(args.OR)}"
+        )
+    elif args.OR is not None:
+        args.betax = np.log(args.OR)
+
     # 这些参数的长度需要保持一致或者是scalar
-    n_studies = None
-    for arg_i in [args.a, args.b, args.sigma2e]:
-        if len(arg_i) != 1:
-            if n_studies is None:
-                n_studies = len(arg_i)
-            else:
-                assert len(arg_i) == n_studies
+    if args.n_studies is None:
+        args.n_studies = None
+        for arg_i in [args.a, args.b, args.sigma2e]:
+            if len(arg_i) != 1:
+                if args.n_studies is None:
+                    args.n_studies = len(arg_i)
+                else:
+                    assert len(arg_i) == args.n_studies
 
     if args.tasks == "summarize":
         # 依靠pattern来找到要print的结果，而非通过指定的参数
@@ -487,6 +495,23 @@ def main():
             with pd.ExcelWriter(summ_save_ffn, mode="w") as writer:
                 all_summ_dfs.to_excel(writer)
         return
+
+    simulator = Simulator(
+        prevalence=args.prevalence,
+        OR=args.OR,
+        direction=args.direction,
+        sigma2_e=args.sigma2e[0] if len(args.sigma2e) == 1 else args.sigma2e,
+        sigma2_x=args.sigma2_x,
+        a=args.a,
+        b=args.b,
+        n_sample_per_studies=(
+            args.nSamples[0] if len(args.nSamples) == 1 else args.nSamples
+        ),
+        n_knowX_per_studies=(
+            args.nKnowX[0] if len(args.nKnowX) == 1 else args.nKnowX
+        ),
+        n_knowX_balance=False,
+    )
 
     for prev_i, or_i in product(args.prevalence, args.OR):
         trial_i = Trials(
@@ -536,7 +561,7 @@ def main():
                 if args.save_action == "raise":
                     raise FileExistsError(save_fn)
                 elif args.save_action == "ignore":
-                    logger_main.info("%s existed, skip." % save_fn)
+                    logger.info("%s existed, skip." % save_fn)
                     continue
             arr, cols = trial_i.simulate()
             with h5py.File(save_fn, "w") as h5:
@@ -549,7 +574,7 @@ def main():
                 if args.save_action == "raise":
                     raise FileExistsError(save_fn)
                 elif args.save_action == "ignore":
-                    logger_main.info("%s existed, skip." % save_fn)
+                    logger.info("%s existed, skip." % save_fn)
                     continue
             (
                 (sim_i, sim_col),
