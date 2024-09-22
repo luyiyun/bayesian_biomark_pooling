@@ -37,7 +37,7 @@ def check_data(
         df[X_col].values,
         df[S_col].values,
         df[W_col].values,
-        df[Y_col].values,
+        df[list(Y_col) if isinstance(Y_col, Sequence) else Y_col].values,
     )
 
     if Z_col is not None:

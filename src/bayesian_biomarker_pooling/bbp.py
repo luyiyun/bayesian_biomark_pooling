@@ -13,8 +13,8 @@ from .base import BiomarkerPoolBase, check_data
 Z --> Y <-- X --> W
 TODO:
 2. Z -?-> W;
-3. binary, continue, and survival outcomes;
 4. +multiple imputation.
+5. survival use weibull instead of expon
 """
 
 
@@ -38,6 +38,7 @@ class BBPResults:
         "sigma_x",
         "X_no_obs",
         "betaz",
+        "sigma_y",
     ]
 
     def __init__(
@@ -77,6 +78,7 @@ class BBP(BiomarkerPoolBase):
         self,
         prior_betax_std: Union[Literal["inf"], float] = "inf",
         prior_betaz_std: Union[Literal["inf"], float] = "inf",
+        prior_sigma_y: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
         prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
         std_prior_a: float = 1.0,
@@ -92,6 +94,7 @@ class BBP(BiomarkerPoolBase):
         pbar: bool = True,
         seed: int = 0,
         target_accept: Optional[float] = None,
+        type_outcome: Literal["binary", "continue", "survival"] = "binary",
     ) -> None:
 
         assert prior_betax_std == "inf" or (
@@ -103,9 +106,11 @@ class BBP(BiomarkerPoolBase):
         assert prior_sigma_ws in ["gamma", "inv_gamma"]
         assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
         assert solver in ["pymc", "vi", "blackjax"]
+        assert type_outcome in ["binary", "continue", "survival"]
 
         self.prior_betax_std_ = prior_betax_std
         self.prior_betaz_std_ = prior_betaz_std
+        self.prior_sigma_y_ = prior_sigma_y
         self.prior_sigma_ws_ = prior_sigma_ws
         self.prior_sigma_ab0_ = prior_sigma_ab0
         self.std_prior_a_ = std_prior_a
@@ -121,6 +126,7 @@ class BBP(BiomarkerPoolBase):
         self.pbar_ = pbar
         self.seed_ = seed
         self.target_accept_ = target_accept
+        self.type_outcome_ = type_outcome
 
     def fit(
         self,
@@ -128,9 +134,13 @@ class BBP(BiomarkerPoolBase):
         X_col: str = "X",
         S_col: str = "S",
         W_col: str = "W",
-        Y_col: str = "Y",
+        Y_col: Union[str, Tuple[str, str]] = "Y",
         Z_col: Optional[Union[str, Sequence[str]]] = None,
     ) -> BBPResults:
+
+        if self.type_outcome_ == "survival":
+            assert isinstance(Y_col, (list, tuple)) and len(Y_col) == 2
+            # T, E
 
         X, S, W, Y, Z = check_data(df, X_col, S_col, W_col, Y_col, Z_col)
 
@@ -231,6 +241,14 @@ class BBP(BiomarkerPoolBase):
                         "betaz", mu=0, sigma=self.prior_betaz_std_, dims="Z"
                     )
                 )
+            # 1.6 sigma_y (continue)
+            if self.type_outcome_ == "continue":
+                if self.prior_sigma_y_ == "half_flat":
+                    sigma_y = pm.HalfFlat("sigma_y")
+                elif self.prior_sigma_y_ == "half_cauchy":
+                    sigma_y = pm.HalfCauchy("sigma_y", 1.0)
+            # elif self.type_outcome_ == "survival":
+            #     wb_alpha = pm.HalfFlat("wb_alpha")
 
             # if beta0s.ndim == 0:
             #     beta0s = [beta0s] * n_S
@@ -266,11 +284,25 @@ class BBP(BiomarkerPoolBase):
                     0.0 if Z is None else (beta_z * data_dict["Z"]).sum(axis=1)
                 )
                 pred = beta0s[i] + betax * X_no_obs_i + zpred
-                pm.Bernoulli(
-                    f"Y_{si}_no_obs_X",
-                    logit_p=pred,
-                    observed=Yi,
-                )
+                if self.type_outcome_ == "binary":
+                    pm.Bernoulli(
+                        f"Y_{si}_no_obs_X",
+                        logit_p=pred,
+                        observed=Yi,
+                    )
+                elif self.type_outcome_ == "continue":
+                    pm.Normal(
+                        f"Y_{si}_no_obs_X",
+                        pred,
+                        sigma_y,
+                        observed=Yi,
+                    )
+                elif self.type_outcome_ == "survival":
+                    pm.Poisson(
+                        f"Y_{si}_no_obs_X",
+                        pm.math.exp(pred) * Yi[:, 0],
+                        observed=Yi[:, 1].astype(int),
+                    )
                 start = end
 
             # for samples that can see X
@@ -289,11 +321,25 @@ class BBP(BiomarkerPoolBase):
                     0 if Z is None else (beta_z * data_dict["Z"]).sum(axis=1)
                 )
                 pred = beta0s[i] + betax * Xi + zpred
-                pm.Bernoulli(
-                    f"Y_{si}_obs_X",
-                    logit_p=pred,
-                    observed=Yi,
-                )
+                if self.type_outcome_ == "binary":
+                    pm.Bernoulli(
+                        f"Y_{si}_obs_X",
+                        logit_p=pred,
+                        observed=Yi,
+                    )
+                elif self.type_outcome_ == "continue":
+                    pm.Normal(
+                        f"Y_{si}_obs_X",
+                        pred,
+                        sigma_y,
+                        observed=Yi,
+                    )
+                elif self.type_outcome_ == "survival":
+                    pm.Poisson(
+                        f"Y_{si}_obs_X",
+                        pm.math.exp(pred) * Yi[:, 0],
+                        observed=Yi[:, 1].astype(int),
+                    )
 
             # ============= 3. MCMC sampling =============
             if self.solver_ == "vi":

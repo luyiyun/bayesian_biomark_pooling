@@ -92,13 +92,14 @@ class Simulator:
         n_knowX_balance: bool = False,
         # others
         direction: Literal["x->w", "w->x"] = "x->w",
-        type_outcome: Literal["binary", "continue"] = "binary",
+        type_outcome: Literal["binary", "continue", "survival"] = "binary",
+        censor_rate: float = 0.2,
     ) -> None:
         """
         n_knowX_balance: 保证存在x的样本中y=1 / y=0的比例与所有样本y=1 / y=0的比例相同
         """
         assert direction in ["x->w", "w->x"]
-        assert type_outcome in ["binary", "continue"]
+        assert type_outcome in ["binary", "continue", "survival"]
         if type_outcome != "binary":
             # 如果不是binary, 则只能直接指定beta0,而不是通过prevalence来间接确定beta0
             assert beta_0 is not None
@@ -175,6 +176,7 @@ class Simulator:
             "n_samples": np.sum(n_sample_per_studies),
             "n_knowX_balance": n_knowX_balance,
             "type_outcome": type_outcome,
+            "censor_rate": censor_rate,
         }
         self._typ_outcome = type_outcome
 
@@ -235,6 +237,7 @@ class Simulator:
 
         Ns = self._parameters["n_sample_per_studies"]
         nKnowX = self._parameters["n_knowX_per_studies"]
+        censor_rate = self._parameters["censor_rate"]
 
         a = np.repeat(self._parameters["a"], Ns)
         b = np.repeat(self._parameters["b"], Ns)
@@ -270,6 +273,26 @@ class Simulator:
         elif self._typ_outcome == "binary":
             p = 1 / (np.exp(-logit) + 1)
             Y = rng.binomial(1, p)
+        elif self._typ_outcome == "survival":
+            T_true = rng.exponential(np.exp(-logit))  # 1 / np.exp(logit)
+
+            def get_observed_time(x):
+                # draw censoring times
+                time_censor = rng.uniform(high=x, size=len(T_true))
+                event = T_true < time_censor
+                time = np.where(event, T_true, time_censor)
+                return event, time
+
+            def censoring_amount(x):
+                event, _ = get_observed_time(x)
+                cens = 1.0 - event.sum() / event.shape[0]
+                return (cens - censor_rate) ** 2
+
+            res = optimize.minimize_scalar(
+                censoring_amount, method="bounded", bounds=(0, T_true.max())
+            )
+            E, T = get_observed_time(res.x)
+            E = E.astype(int)
 
         X_obs = X.copy()
         start = 0
@@ -304,7 +327,6 @@ class Simulator:
             {
                 "W": W,
                 "X_true": X,
-                "Y": Y,
                 "X": X_obs,
                 # 从1开始
                 "S": np.repeat(
@@ -313,6 +335,13 @@ class Simulator:
                 "H": ~np.isnan(X_obs),
             }
         )
+        if self._typ_outcome == "survival":
+            res["T_true"] = T_true
+            res["T"] = T
+            res["E"] = E
+        else:
+            res["Y"] = Y
+
         if self._parameters["beta_z"] is not None:
             res = pd.concat(
                 [

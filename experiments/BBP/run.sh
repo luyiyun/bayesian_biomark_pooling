@@ -189,7 +189,19 @@
 # test with Z
 # python ./simulate_data.py --nSamples 100 --n_knowX_balance --nrepeat 100 \
 #     --nKnowX 10 --prevalence 0.5 --OR 3.0 --betaz 1.0 1.5 2.0  --save_prefix prev05_OR3_X10_sigx1_sige1_Z3
-python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1_Z3*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
-    --save_prefix noinfo_prior --prior_betax_std inf --prior_betaz_std inf
+# python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1_Z3*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+#     --save_prefix noinfo_prior --prior_betax_std inf --prior_betaz_std inf
 # python ./run_simulation.py --target_data "./data/prev05_OR3_X10_sigx1_sige1_Z3*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
 #     --save_prefix weak_prior --prior_betax_std 100 --prior_betaz_std 100
+
+# test continue
+# python ./simulate_data.py --nSamples 100 --nrepeat 100 \
+#     --nKnowX 10 --betax 1.0 --type_outcome continue --save_prefix conti_prev05_OR3_X10_sigx1_sige1
+# python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax \
+#     --save_prefix noinfo_prior --prior_betax_std inf  --type_outcome continue # best
+
+# test survival
+python ./simulate_data.py --nSamples 100 --nrepeat 100 \
+    --nKnowX 10 --betax 1.0 --type_outcome survival --save_prefix surv_prev05_OR3_X10_sigx1_sige1
+python ./run_simulation.py --target_data "./data/surv_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+    --save_prefix noinfo_prior --prior_betax_std inf  --type_outcome survival # best

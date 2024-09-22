@@ -62,6 +62,7 @@ def main():
         choices=["continue", "binary", "survival"],
         default="binary",
     )
+    parser.add_argument("--censor_rate", type=float, default=0.2)
 
     args = parser.parse_args()
 
@@ -104,6 +105,7 @@ def main():
         n_knowX_balance=args.n_knowX_balance,
         direction=args.direction,
         type_outcome=args.type_outcome,
+        censor_rate=args.censor_rate,
     )
 
     # save name

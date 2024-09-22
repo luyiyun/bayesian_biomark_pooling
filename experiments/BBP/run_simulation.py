@@ -32,7 +32,11 @@ def bbp_pipeline(
         target_accept=0.95,
         **bbp_kwargs,
     )
-    fit_res = model.fit(dfi, Z_col=Z_col)
+    fit_res = model.fit(
+        dfi,
+        Z_col=Z_col,
+        Y_col=("T", "E") if bbp_kwargs["type_outcome"] == "survival" else "Y",
+    )
     return fit_res.summary(
         var_names=["betax", "a_s", "b_s", "beta0s"]
         + (["betaz"] if Z_col is not None else [])
@@ -55,6 +59,12 @@ def main():
     )
     # parser.add_argument("--block_size", type=int, default=500)
 
+    parser.add_argument(
+        "--type_outcome",
+        type=str,
+        choices=["binary", "continue", "survival"],
+        default="binary",
+    )
     parser.add_argument(
         "--prior_sigma_ws",
         type=str,
@@ -141,6 +151,7 @@ def main():
             nsample=args.ndraws,
             ntunes=args.ntunes,
             solver=args.solver,
+            type_outcome=args.type_outcome,
         )
         if args.ncores <= 1:
             res_bbp = []
