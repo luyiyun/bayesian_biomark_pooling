@@ -6,6 +6,9 @@ import pymc as pm
 import arviz as az
 import pytensor.tensor as pt
 from pymc.backends.base import MultiTrace
+from tqdm import tqdm
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from lifelines import CoxPHFitter
 
 from .base import BiomarkerPoolBase, check_data
 
@@ -24,9 +27,11 @@ class BBPResults:
         self,
         model: pm.Model,
         res_mcmc: Union[az.InferenceData, MultiTrace, pm.Approximation],
+        res_multi_imp: Optional[np.ndarray] = None,
     ) -> None:
         self.model_ = model
         self.res_mcmc_ = res_mcmc
+        self.res_multi_imp_ = res_multi_imp
 
         self._all_hidden_vars = list(self.res_mcmc_.posterior.keys())
 
@@ -48,6 +53,39 @@ class BBPResults:
             kind="stats",
             var_names=list(var_names),
         )
+        if self.res_multi_imp_ is not None:
+            if var_names is None or "betax" in var_names:
+                val = np.concatenate(
+                    [
+                        self.res_multi_imp_[:, 0],
+                        self.res_mcmc_.posterior["betax"].values.flatten(),
+                    ]
+                )
+                res_df.loc["betax", "mean"] = np.mean(val)
+                res_df.loc["betax", "sd"] = np.std(val, ddof=1)
+                res_df.loc["betax", ["hdi_2.5%", "hdi_97.5%"]] = np.quantile(
+                    val, [0.025, 0.975]
+                )
+
+                if self.res_multi_imp_.shape[1] > 1 and (
+                    var_names is None or "betaz" in var_names
+                ):
+                    val_betaz_mcmc = self.res_mcmc_.posterior["betaz"].values
+                    val_betaz = np.concatenate(
+                        [
+                            self.res_multi_imp_[:, 1:],
+                            val_betaz_mcmc.reshape(
+                                -1, val_betaz_mcmc.shape[-1]
+                            ),
+                        ],
+                        axis=0,
+                    )
+                    ind = res_df.index.str.startswith("betaz")
+                    res_df.loc[ind, "mean"] = np.mean(val_betaz, axis=0)
+                    res_df.loc[ind, "sd"] = np.std(val_betaz, axis=0, ddof=1)
+                    res_df.loc[ind, ["hdi_2.5%", "hdi_97.5%"]] = np.quantile(
+                        val_betaz, [0.025, 0.975], axis=0
+                    )
 
         return res_df
 
@@ -142,7 +180,7 @@ class BBP(BiomarkerPoolBase):
         prior_std_b_scale: TYPE_STD = 1.0,
         prior_mu_beta0_std: TYPE_STD = 10.0,
         prior_std_beta0_scale: TYPE_STD = 1.0,
-        solver: Literal["pymc", "vi", "blackjax"] = "pymc",
+        solver: Literal["pymc", "blackjax"] = "pymc",
         nsample: int = 1000,
         ntunes: int = 1000,
         nchains: int = 4,
@@ -150,7 +188,11 @@ class BBP(BiomarkerPoolBase):
         seed: int = 0,
         target_accept: Optional[float] = 0.99,
         type_outcome: Literal["binary", "continue", "survival"] = "binary",
+        multiple_imputation: bool = False,
     ) -> None:
+        """
+        calibration_approximation=True means that P(W|X, Z) = P(W|X)
+        """
 
         assert prior_betax_std == "inf" or (
             isinstance(prior_betax_std, float) and prior_betax_std > 0
@@ -182,6 +224,7 @@ class BBP(BiomarkerPoolBase):
         self.seed_ = seed
         self.target_accept_ = target_accept
         self.type_outcome_ = type_outcome
+        self.multi_imp_ = multiple_imputation
 
     def fit(
         self,
@@ -258,7 +301,7 @@ class BBP(BiomarkerPoolBase):
             # 1.3 == beta_z ==
             if Z is not None:
                 beta_z = set_real_value_rv(
-                    "betaz", self.prior_betax_std_, dims="Z"
+                    "betaz", self.prior_betaz_std_, dims="Z"
                 )
             # 1.4 == scale of y (continue or survival) ==
             if self.type_outcome_ == "continue":
@@ -399,21 +442,55 @@ class BBP(BiomarkerPoolBase):
                     )
 
             # ============= 3. MCMC sampling =============
-            if self.solver_ == "vi":
-                res = pm.fit(progressbar=self.pbar_, random_seed=self.seed_)
-            else:
-                kwargs = dict(
-                    tune=self.ntunes_,
-                    chains=self.nchains_,
-                    cores=self.nchains_,
-                    progressbar=self.pbar_,
-                    random_seed=list(
-                        range(self.seed_, self.seed_ + self.nchains_)
-                    ),
-                    nuts_sampler=self.solver_,
-                )
-                if self.target_accept_ is not None:
-                    kwargs["target_accept"] = self.target_accept_
-                res = pm.sample(self.nsample_, **kwargs)
+            kwargs = dict(
+                tune=self.ntunes_,
+                chains=self.nchains_,
+                cores=self.nchains_,
+                progressbar=self.pbar_,
+                random_seed=list(
+                    range(self.seed_, self.seed_ + self.nchains_)
+                ),
+                nuts_sampler=self.solver_,
+            )
+            if self.target_accept_ is not None:
+                kwargs["target_accept"] = self.target_accept_
+            res = pm.sample(self.nsample_, **kwargs)
 
-        return BBPResults(model, res)
+        if self.multi_imp_:
+            X_on_obs_val = res.posterior.X_no_obs.values.reshape(-1, n_xUnKnow)
+            all_beta = []
+            for i in tqdm(
+                range(self.nchains_ * self.nsample_),
+                disable=not self.pbar_,
+                desc="Multiple Imputation: ",
+            ):
+                X_imp = X.copy()
+                X_imp[is_m] = X_on_obs_val[i, :]
+                X_imp = X_imp[:, None]
+                if Z is not None:
+                    X_imp = np.concatenate([X_imp, Z], axis=1)
+                if self.type_outcome_ == "continue":
+                    estimator = LinearRegression()
+                    estimator.fit(X_imp, Y)
+                    beta = estimator.coef_
+                elif self.type_outcome_ == "binary":
+                    estimator = LogisticRegression()
+                    estimator.fit(X_imp, Y)
+                    beta = estimator.coef_
+                elif self.type_outcome_ == "survival":
+                    df_imp = pd.DataFrame(X_imp)
+                    df_imp.columns = (
+                        ["X"] if Z is None else ["X"] + list(Z_col)
+                    )
+                    df_imp["T"] = Y[:, 0]
+                    df_imp["E"] = Y[:, 1].astype(int)
+                    estimator = CoxPHFitter()
+                    estimator.fit(df=df_imp, duration_col="T", event_col="E")
+                    beta = estimator.hazards_
+
+                all_beta.append(beta)
+            all_beta = np.stack(all_beta, axis=0)
+        else:
+            all_beta = None
+
+        return BBPResults(model, res, all_beta)

@@ -27,11 +27,7 @@ def bbp_pipeline(
     queue: Optional[mp.Queue] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     dfi = pd.read_hdf(h5fn, key)
-    model = BBP(
-        pbar=False,
-        nchains=1,
-        **bbp_kwargs,
-    )
+    model = BBP(**bbp_kwargs)
     fit_res = model.fit(
         dfi,
         Z_col=Z_col,
@@ -77,6 +73,7 @@ def main():
         type=lambda x: x if x == "inf" else float(x),
         default=10.,
     )
+    parser.add_argument("--multi_imp", action="store_true")
     # parser.add_argument(
     #     "--prior_sigma_ws",
     #     type=str,
@@ -149,6 +146,9 @@ def main():
             ntunes=args.ntunes,
             solver=args.solver,
             type_outcome=args.type_outcome,
+            multiple_imputation=args.multi_imp,
+            pbar=False,
+            nchains=1,
         )
         if args.ncores <= 1:
             res_bbp = []

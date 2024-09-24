@@ -198,10 +198,13 @@
 # python ./simulate_data.py --nSamples 100 --nrepeat 100 \
 #     --nKnowX 10 --betax 1.0 --type_outcome continue --save_prefix conti_prev05_OR3_X10_sigx1_sige1
 # python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
-#     --save_prefix weak_prior --prior_betax_std 10  --type_outcome continue # best
+#     --save_prefix multi_imp_weak_prior --prior_betax_std 10  --type_outcome continue --multi_imp
+python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+    --save_prefix weak_prior --prior_betax_std 10  --type_outcome continue
+
 
 # test survival
 # python ./simulate_data.py --nSamples 100 --nrepeat 100 \
 #     --nKnowX 10 --betax 1.0 --type_outcome survival --save_prefix surv_2_prev05_OR3_X10_sigx1_sige1
-python ./run_simulation.py --target_data "./data/surv_2_prev05_OR3_X10_sigx1_sige1_2024-09-24*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
-    --save_prefix weak_prior --prior_betax_std 10  --type_outcome survival # best
+# python ./run_simulation.py --target_data "./data/surv_2_prev05_OR3_X10_sigx1_sige1_2024-09-24*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+#     --save_prefix weak_prior --prior_betax_std 10  --type_outcome survival # best
