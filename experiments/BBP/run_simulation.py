@@ -24,12 +24,12 @@ def bbp_pipeline(
     key: str,
     Z_col: Optional[Sequence[str]],
     bbp_kwargs: Dict[str, Any],
+    queue: Optional[mp.Queue] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     dfi = pd.read_hdf(h5fn, key)
     model = BBP(
         pbar=False,
         nchains=1,
-        target_accept=0.95,
         **bbp_kwargs,
     )
     fit_res = model.fit(
@@ -37,10 +37,13 @@ def bbp_pipeline(
         Z_col=Z_col,
         Y_col=("T", "E") if bbp_kwargs["type_outcome"] == "survival" else "Y",
     )
-    return fit_res.summary(
-        var_names=["betax", "a_s", "b_s", "beta0s"]
+    res = fit_res.summary(
+        var_names=["betax", "a_s", "b_s", "beta0_s"]
         + (["betaz"] if Z_col is not None else [])
     )
+    if queue is not None:
+        queue.put(key)
+    return res
 
 
 def main():
@@ -57,39 +60,38 @@ def main():
     parser.add_argument(
         "--solver", type=str, choices=["pymc", "blackjax"], default="pymc"
     )
-    # parser.add_argument("--block_size", type=int, default=500)
-
     parser.add_argument(
         "--type_outcome",
         type=str,
         choices=["binary", "continue", "survival"],
         default="binary",
     )
-    parser.add_argument(
-        "--prior_sigma_ws",
-        type=str,
-        choices=["gamma", "inv_gamma"],
-        default="inv_gamma",
-    )
-    parser.add_argument(
-        "--prior_sigma_ab0",
-        type=str,
-        choices=["half_cauchy", "half_flat"],
-        default="half_cauchy",
-    )
+
     parser.add_argument(
         "--prior_betax_std",
         type=lambda x: x if x == "inf" else float(x),
-        default="inf",
+        default=10.,
     )
     parser.add_argument(
         "--prior_betaz_std",
         type=lambda x: x if x == "inf" else float(x),
-        default="inf",
+        default=10.,
     )
-    parser.add_argument("--prior_a_std", type=float, default=1.0)
-    parser.add_argument("--prior_b_std", type=float, default=1.0)
-    parser.add_argument("--prior_beta0_std", type=float, default=1.0)
+    # parser.add_argument(
+    #     "--prior_sigma_ws",
+    #     type=str,
+    #     choices=["gamma", "inv_gamma"],
+    #     default="inv_gamma",
+    # )
+    # parser.add_argument(
+    #     "--prior_sigma_ab0",
+    #     type=str,
+    #     choices=["half_cauchy", "half_flat"],
+    #     default="half_cauchy",
+    # )
+    # parser.add_argument("--prior_a_std", type=float, default=1.0)
+    # parser.add_argument("--prior_b_std", type=float, default=1.0)
+    # parser.add_argument("--prior_beta0_std", type=float, default=1.0)
     parser.add_argument("--ndraws", type=int, default=1000)
     parser.add_argument("--ntunes", type=int, default=1000)
 
@@ -143,11 +145,6 @@ def main():
             seed=args.seed,
             prior_betax_std=args.prior_betax_std,
             prior_betaz_std=args.prior_betaz_std,
-            prior_sigma_ws=args.prior_sigma_ws,
-            prior_sigma_ab0=args.prior_sigma_ab0,
-            std_prior_a=args.prior_a_std,
-            std_prior_b=args.prior_b_std,
-            std_prior_beta0=args.prior_beta0_std,
             nsample=args.ndraws,
             ntunes=args.ntunes,
             solver=args.solver,
@@ -172,23 +169,33 @@ def main():
             #                 bar.write(msg)
             #             shutil.rmtree(osp.join(cache_dir, fn))
 
-            with mp.Pool(args.ncores) as pool:
-                temp_reses = [
-                    pool.apply_async(
-                        bbp_pipeline,
-                        (
-                            fn,
-                            i,
-                            Z_col,
-                            bbp_kwargs,
-                        ),
-                    )
-                    for i in seeds
-                ]
-                res_bbp = [
-                    xr.DataArray(resi.get(), dims=["param", "stats"])
-                    for resi in tqdm(temp_reses)
-                ]
+            with mp.Manager() as manager:
+                q = manager.Queue()
+                with mp.Pool(args.ncores) as pool:
+                    temp_reses = [
+                        pool.apply_async(
+                            bbp_pipeline,
+                            (
+                                fn,
+                                i,
+                                Z_col,
+                                bbp_kwargs,
+                                q
+                            ),
+                        )
+                        for i in seeds
+                    ]
+
+                    with tqdm(total=len(seeds)) as bar:
+                        for _ in range(len(seeds)):
+                            k = q.get()
+                            bar.set_postfix_str(f"{k} complete.")
+                            bar.update()
+
+                    res_bbp = [
+                        xr.DataArray(resi.get(), dims=["param", "stats"])
+                        for resi in temp_reses
+                    ]
 
         res_bbp = xr.concat(res_bbp, pd.Index(seeds, name="seed"))
 

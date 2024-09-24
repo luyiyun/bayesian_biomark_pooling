@@ -274,7 +274,9 @@ class Simulator:
             p = 1 / (np.exp(-logit) + 1)
             Y = rng.binomial(1, p)
         elif self._typ_outcome == "survival":
-            T_true = rng.exponential(np.exp(-logit))  # 1 / np.exp(logit)
+            T_true = rng.exponential(np.exp(logit))  # 1 / np.exp(logit)
+            # alpha=2., lam=exp(-logit)
+            # T_true = rng.weibull(2., logit.shape[0]) * np.exp(-logit)
 
             def get_observed_time(x):
                 # draw censoring times

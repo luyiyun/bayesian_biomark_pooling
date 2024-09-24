@@ -1,9 +1,10 @@
-from typing import Literal, Optional, Tuple, Union, List, Sequence
+from typing import Literal, Optional, Tuple, Union, Sequence
 
 import numpy as np
 import pandas as pd
 import pymc as pm
 import arviz as az
+import pytensor.tensor as pt
 from pymc.backends.base import MultiTrace
 
 from .base import BiomarkerPoolBase, check_data
@@ -14,32 +15,10 @@ Z --> Y <-- X --> W
 TODO:
 2. Z -?-> W;
 4. +multiple imputation.
-5. survival use weibull instead of expon
 """
 
 
 class BBPResults:
-
-    all_hidden_variables: List[str] = [
-        "betax",
-        "mu_sigma_w",
-        "sigma_sigma_w",
-        "simga_ws",
-        "a",
-        "b",
-        "beta0",
-        "sigma_a",
-        "sigma_b",
-        "sigma_0",
-        "a_s",
-        "b_s",
-        "beta0s",
-        "mu_x",
-        "sigma_x",
-        "X_no_obs",
-        "betaz",
-        "sigma_y",
-    ]
 
     def __init__(
         self,
@@ -49,18 +28,19 @@ class BBPResults:
         self.model_ = model
         self.res_mcmc_ = res_mcmc
 
+        self._all_hidden_vars = list(self.res_mcmc_.posterior.keys())
+
     def summary(
         self,
         var_names: Optional[Tuple[str]] = ("betax",),
     ) -> pd.DataFrame:
 
-        str_all_hidden_variables = ",".join(self.all_hidden_variables)
-        assert (
-            len(set(var_names).difference(self.all_hidden_variables)) == 0
-        ), (
-            "The element of var_names must "
-            f"be one of [{str_all_hidden_variables}]"
-        )
+        if len(set(var_names).difference(self._all_hidden_vars)) > 0:
+            str_all_hidden_variables = ",".join(self._all_hidden_vars)
+            raise ValueError(
+                "The element of var_names "
+                f"must be one of [{str_all_hidden_variables}]"
+            )
 
         res_df = az.summary(
             self.res_mcmc_,
@@ -72,28 +52,103 @@ class BBPResults:
         return res_df
 
 
+TYPE_STD = Union[Literal["inf"], float]
+
+
+def set_real_value_rv(
+    name: str, std: TYPE_STD, dims: Optional[str] = None
+) -> pm.Continuous:
+    return (
+        pm.Flat(name, dims=dims)
+        if std == "inf"
+        else pm.Normal(name, mu=0, sigma=std, dims=dims)
+    )
+
+
+def set_pos_value_rv(
+    name: str, scale: TYPE_STD, dims: Optional[str] = None
+) -> pm.Continuous:
+    return (
+        pm.HalfFlat(name, dims=dims)
+        if scale == "inf"
+        else pm.HalfCauchy(name, beta=scale, dims=dims)
+    )
+
+
+def set_surv_likelihood(
+    name: str,
+    Yi: np.ndarray,
+    pred: pm.Continuous,
+    shape: Optional[pm.Continuous] = None,
+    kind: Literal["expon", "weibull", "piece-const"] = "expon",
+    interval_bounds: Optional[np.ndarray] = None,
+    lambda0: Optional[pm.Continuous] = None,
+) -> pm.Continuous:
+    if kind == "expon":
+        return pm.Poisson(
+            name,
+            pm.math.exp(pred) * Yi[:, 0],
+            observed=Yi[:, 1].astype(int),
+        )
+    elif kind == "weibull":
+        mask_cens = Yi[:, 1] == 0
+        return (
+            pm.Weibull(
+                f"{name}_nocen",
+                alpha=shape,
+                beta=pt.exp(pred[~mask_cens] / shape),
+                observed=Yi[~mask_cens, 0],
+            ),
+            pm.Potential(
+                f"{name}_censor",
+                -(pt.pow(Yi[mask_cens, 0], shape) * pt.exp(-pred[mask_cens])),
+            ),
+        )
+    elif kind == "piece-const":
+        t, e = Yi[:, 0], Yi[:, 1].astype(int)
+        interval_lens = interval_bounds[1:] - interval_bounds[:-1]
+        n_intervals = len(interval_lens)
+        mask = (t[:, None] > interval_bounds[:-1]) & (
+            t[:, None] <= interval_bounds[1:]
+        )
+        y_ind = np.nonzero(mask)[1]
+        # 需要构造一个n_samples x n_intervals的0-1矩阵,
+        # 当sample i的event在第j个interval中出现时,该矩阵的ij元=1,其他为0.
+        e_mat = np.zeros((len(t), n_intervals))
+        e_mat[np.arange(len(t)), y_ind] = e
+        # 需要构造一个n_samples x n_intervals的正实数矩阵, 当sample i的
+        # event或censor发生在第j个interval中出现时, i1,...,i(j-1)的元素
+        # 为对应的interval长度,ij的元素是t-第j个interval的begin, i(j+1),...是0
+        t_mat = (t[:, None] >= interval_bounds[:-1]) * interval_lens
+        t_mat[np.arange(len(t)), y_ind] = t - interval_bounds[y_ind]
+        return pm.Poisson(
+            name, pt.exp(pred)[:, None] * lambda0 * t_mat, observed=e_mat
+        )
+
+
 class BBP(BiomarkerPoolBase):
 
     def __init__(
         self,
-        prior_betax_std: Union[Literal["inf"], float] = "inf",
-        prior_betaz_std: Union[Literal["inf"], float] = "inf",
-        prior_sigma_y: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-        prior_sigma_ws: Literal["gamma", "inv_gamma"] = "gamma",
-        prior_sigma_ab0: Literal["half_cauchy", "half_flat"] = "half_cauchy",
-        std_prior_a: float = 1.0,
-        std_prior_b: float = 1.0,
-        std_prior_beta0: float = 1.0,
-        std_prior_mu_x: float = 10.0,
-        mean_prior_sigma_x: float = 1.0,
-        sigma_prior_sigma_x: float = 1.0,
+        prior_betax_std: TYPE_STD = 10,
+        prior_betaz_std: TYPE_STD = 10,
+        prior_mu_x_std: TYPE_STD = 10.0,
+        prior_std_x_scale: TYPE_STD = 1.0,
+        prior_y_scale: TYPE_STD = 1.0,
+        prior_alpha_scale: TYPE_STD = 1.0,
+        prior_mu_a_std: TYPE_STD = 10.0,
+        prior_std_a_scale: TYPE_STD = 1.0,
+        prior_mu_b_std: TYPE_STD = 10.0,
+        prior_std_b_scale: TYPE_STD = 1.0,
+        prior_mu_beta0_std: TYPE_STD = 10.0,
+        prior_std_beta0_scale: TYPE_STD = 1.0,
         solver: Literal["pymc", "vi", "blackjax"] = "pymc",
         nsample: int = 1000,
         ntunes: int = 1000,
         nchains: int = 4,
         pbar: bool = True,
         seed: int = 0,
-        target_accept: Optional[float] = None,
+        target_accept: Optional[float] = 0.99,
         type_outcome: Literal["binary", "continue", "survival"] = "binary",
     ) -> None:
 
@@ -103,22 +158,22 @@ class BBP(BiomarkerPoolBase):
         assert prior_betaz_std == "inf" or (
             isinstance(prior_betaz_std, float) and prior_betaz_std > 0
         )
-        assert prior_sigma_ws in ["gamma", "inv_gamma"]
-        assert prior_sigma_ab0 in ["half_cauchy", "half_flat"]
         assert solver in ["pymc", "vi", "blackjax"]
         assert type_outcome in ["binary", "continue", "survival"]
 
         self.prior_betax_std_ = prior_betax_std
         self.prior_betaz_std_ = prior_betaz_std
-        self.prior_sigma_y_ = prior_sigma_y
-        self.prior_sigma_ws_ = prior_sigma_ws
-        self.prior_sigma_ab0_ = prior_sigma_ab0
-        self.std_prior_a_ = std_prior_a
-        self.std_prior_b_ = std_prior_b
-        self.std_prior_beta0_ = std_prior_beta0
-        self.std_prior_mu_x_ = std_prior_mu_x
-        self.mean_prior_sigma_x_ = mean_prior_sigma_x
-        self.sigma_prior_sigma_x_ = sigma_prior_sigma_x
+        self.prior_mu_x_std_ = prior_mu_x_std
+        self.prior_std_x_scale_ = prior_std_x_scale
+        self.prior_y_scale_ = prior_y_scale
+        self.prior_alpha_scale_ = prior_alpha_scale
+        self.prior_mu_a_std_ = prior_mu_a_std
+        self.prior_std_a_scale_ = prior_std_a_scale
+        self.prior_mu_b_std_ = prior_mu_b_std
+        self.prior_std_b_scale_ = prior_std_b_scale
+        self.prior_mu_beta0_std_ = prior_mu_beta0_std
+        self.prior_std_beta0_scale_ = prior_std_beta0_scale
+
         self.solver_ = solver
         self.nsample_ = nsample
         self.ntunes_ = ntunes
@@ -186,82 +241,80 @@ class BBP(BiomarkerPoolBase):
 
         with pm.Model(coords=coords) as model:
             # ============= 1. set prior =============
-            # 1.1 betax
-            betax = (
-                pm.Flat("betax")
-                if self.prior_betax_std_ == "inf"
-                else pm.Normal("betax", mu=0, sigma=self.prior_betax_std_)
-            )
-            # 1.2 sigma_w_s
-            mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
-            sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
-            if self.prior_sigma_ws_ == "gamma":
-                sigma_ws = pm.Gamma(
-                    "sigma_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
-                )
-            elif self.prior_sigma_ws_ == "inv_gamma":
-                sigma2_ws = pm.InverseGamma(
-                    "sigma2_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
-                )
-                sigma_ws = pm.Deterministic(
-                    "sigma_ws", pm.math.sqrt(sigma2_ws)
-                )
-            # 1.3 a_s, b_s, beta0_s
-            a = pm.Normal("a", 0, self.std_prior_a_)
-            b = pm.Normal("b", 0, self.std_prior_b_)
-            beta0 = pm.Normal("beta0", 0, self.std_prior_beta0_)
-            if self.prior_sigma_ab0_ == "half_cauchy":
-                sigma_a = pm.HalfCauchy("sigma_a", 1.0)
-                sigma_b = pm.HalfCauchy("sigma_b", 1.0)
-                sigma_0 = pm.HalfCauchy("sigma_0", 1.0)
-            elif self.prior_sigma_ab0_ == "half_flat":
-                sigma_a = pm.HalfFlat("sigma_a")
-                sigma_b = pm.HalfFlat("sigma_b")
-                sigma_0 = pm.HalfFlat("sigma_0")
-            a_s = pm.Normal("a_s", a, sigma_a, dims="S")
-            b_s = pm.Normal("b_s", b, sigma_b, dims="S")
-            beta0s = pm.Normal("beta0s", beta0, sigma_0, dims="S")
-            # 1.4 mu_x, sigma_x
-            mu_x = pm.Normal("mu_x", 0, self.std_prior_mu_x_)
+            # 1.1 == mu_x, sigma_x ==
+            mu_x = set_real_value_rv("mu_x", self.prior_mu_x_std_)
+            sigma_x = set_pos_value_rv("sigma_x", self.prior_std_x_scale_)
             # convert the mean-sigma format to alpha-beta format
-            beta = (
-                self.mean_prior_sigma_x_
-                + np.sqrt(
-                    self.mean_prior_sigma_x_ + self.sigma_prior_sigma_x_**2
-                )
-            ) / (2 * self.sigma_prior_sigma_x_**2)
-            alpha = self.mean_prior_sigma_x_ * beta + 1
-            sigma_x = pm.Gamma("sigma_x", alpha=alpha, beta=beta)
-            # 1.5 beta_z
+            # beta = (
+            #     self.mean_prior_sigma_x_
+            #     + np.sqrt(
+            #         self.mean_prior_sigma_x_ + self.sigma_prior_sigma_x_**2
+            #     )
+            # ) / (2 * self.sigma_prior_sigma_x_**2)
+            # alpha = self.mean_prior_sigma_x_ * beta + 1
+            # sigma_x = pm.Gamma("sigma_x", alpha=alpha, beta=beta)
+            # 1.2 == betax ==
+            betax = set_real_value_rv("betax", self.prior_betax_std_)
+            # 1.3 == beta_z ==
             if Z is not None:
-                beta_z = (
-                    pm.Flat("betaz")
-                    if self.prior_betaz_std_ == "inf"
-                    else pm.Normal(
-                        "betaz", mu=0, sigma=self.prior_betaz_std_, dims="Z"
-                    )
+                beta_z = set_real_value_rv(
+                    "betaz", self.prior_betax_std_, dims="Z"
                 )
-            # 1.6 sigma_y (continue)
+            # 1.4 == scale of y (continue or survival) ==
             if self.type_outcome_ == "continue":
-                if self.prior_sigma_y_ == "half_flat":
-                    sigma_y = pm.HalfFlat("sigma_y")
-                elif self.prior_sigma_y_ == "half_cauchy":
-                    sigma_y = pm.HalfCauchy("sigma_y", 1.0)
-            # elif self.type_outcome_ == "survival":
-            #     wb_alpha = pm.HalfFlat("wb_alpha")
+                sigma_y = set_pos_value_rv("sigma_y", self.prior_y_scale_)
+            elif self.type_outcome_ == "survival":
+                alpha_surv = set_pos_value_rv(
+                    "alpha_surv", self.prior_alpha_scale_
+                )
+            # 1.5 == sigma_w_s ==
+            sigma_ws_scale = pm.HalfCauchy("sigma_ws_scale", 1.0)
+            sigma_ws_tilde = pm.Uniform("sigma_ws_tilde", 0, 1, dims="S")
+            sigma_ws = pm.Deterministic(
+                "sigma_ws",
+                pt.tan(np.pi / 2 * sigma_ws_tilde) * sigma_ws_scale,
+                dims="S",
+            )
+            # mu_sigma_w = pm.HalfFlat("mu_sigma_w")  # mu_sigma_w这里其实是mode
+            # sigma_sigma_w = pm.HalfCauchy("sigma_sigma_w", 1.0)
+            # if self.prior_sigma_ws_ == "gamma":
+            #     sigma_ws = pm.Gamma(
+            #         "sigma_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
+            #     )
+            # elif self.prior_sigma_ws_ == "inv_gamma":
+            #     sigma2_ws = pm.InverseGamma(
+            #         "sigma2_ws", mu=mu_sigma_w, sigma=sigma_sigma_w, dims="S"
+            #     )
+            #     sigma_ws = pm.Deterministic(
+            #         "sigma_ws", pm.math.sqrt(sigma2_ws), dims="S"
+            #     )
+            # 1.6 == a_s, b_s, beta0_s ==
+            # reparameterization to reduce divergences
+            mu_a = set_real_value_rv("mu_a", self.prior_mu_a_std_)
+            std_a = set_pos_value_rv("std_a", self.prior_std_a_scale_)
+            a_error = pm.Normal("a_error", 0, 1, dims="S")
+            a_s = pm.Deterministic("a_s", std_a * a_error + mu_a)
 
-            # if beta0s.ndim == 0:
-            #     beta0s = [beta0s] * n_S
-            # if sigma_ws.ndim == 0:
-            #     sigma_ws = [sigma_ws] * n_S
+            mu_b = set_real_value_rv("mu_b", self.prior_mu_b_std_)
+            std_b = set_pos_value_rv("std_b", self.prior_std_b_scale_)
+            b_error = pm.Normal("b_error", 0, 1, dims="S")
+            b_s = pm.Deterministic("b_s", std_b * b_error + mu_b)
+
+            mu_beta0 = set_real_value_rv("mu_beta0", self.prior_mu_beta0_std_)
+            std_beta0 = set_pos_value_rv(
+                "std_beta0", self.prior_std_beta0_scale_
+            )
+            beta0_error = pm.Normal("beta0_error", 0, 1, dims="S")
+            beta0s = pm.Deterministic(
+                "beta0_s", std_beta0 * beta0_error + mu_beta0
+            )
 
             # ============= 2. set data generation model =============
             # for samples that can not see X
-            X_no_obs = pm.Normal(
-                "X_no_obs",
-                mu_x,
-                sigma_x,
-                size=n_xUnKnow,
+            # reparameterization to reduce divergences
+            X_no_obs_error = pm.Normal("X_no_obs_error", 0, 1, size=n_xUnKnow)
+            X_no_obs = pm.Deterministic(
+                "X_no_obs", X_no_obs_error * sigma_x + mu_x
             )
             start = 0
             for i, (si, data_dict) in enumerate(WYZ_xUnKnow.items()):
@@ -298,10 +351,12 @@ class BBP(BiomarkerPoolBase):
                         observed=Yi,
                     )
                 elif self.type_outcome_ == "survival":
-                    pm.Poisson(
+                    set_surv_likelihood(
                         f"Y_{si}_no_obs_X",
-                        pm.math.exp(pred) * Yi[:, 0],
-                        observed=Yi[:, 1].astype(int),
+                        Yi=Yi,
+                        pred=pred,
+                        kind="weibull",
+                        shape=alpha_surv,
                     )
                 start = end
 
@@ -335,10 +390,12 @@ class BBP(BiomarkerPoolBase):
                         observed=Yi,
                     )
                 elif self.type_outcome_ == "survival":
-                    pm.Poisson(
+                    set_surv_likelihood(
                         f"Y_{si}_obs_X",
-                        pm.math.exp(pred) * Yi[:, 0],
-                        observed=Yi[:, 1].astype(int),
+                        Yi=Yi,
+                        pred=pred,
+                        kind="weibull",
+                        shape=alpha_surv,
                     )
 
             # ============= 3. MCMC sampling =============
