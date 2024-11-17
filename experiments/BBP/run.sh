@@ -172,10 +172,10 @@
 
 ##################################################################################################################################################
 #
-# NEW: generation data
+# NEW: test
 #
 ##################################################################################################################################################
-# OTHERS="--prevalence 0.25 0.5 --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
+# OTHERS="--prevalence  --OR 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0 --nrepeat 1000 --ncores 20 --nSamples 100 --n_knowX_balance"
 
 # test without Z
 # python ./simulate_data.py --nSamples 100 --n_knowX_balance --nrepeat 100 \
@@ -199,8 +199,8 @@
 #     --nKnowX 10 --betax 1.0 --type_outcome continue --save_prefix conti_prev05_OR3_X10_sigx1_sige1
 # python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
 #     --save_prefix multi_imp_weak_prior --prior_betax_std 10  --type_outcome continue --multi_imp
-python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
-    --save_prefix weak_prior --prior_betax_std 10  --type_outcome continue
+# python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige1*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
+#     --save_prefix weak_prior --prior_betax_std 10  --type_outcome continue
 
 
 # test survival
@@ -208,3 +208,43 @@ python ./run_simulation.py --target_data "./data/conti_prev05_OR3_X10_sigx1_sige
 #     --nKnowX 10 --betax 1.0 --type_outcome survival --save_prefix surv_2_prev05_OR3_X10_sigx1_sige1
 # python ./run_simulation.py --target_data "./data/surv_2_prev05_OR3_X10_sigx1_sige1_2024-09-24*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 \
 #     --save_prefix weak_prior --prior_betax_std 10  --type_outcome survival # best
+
+##################################################################################################################################################
+#
+# NEW: formal experiments
+#
+##################################################################################################################################################
+
+# binary outcome, without Z, normal scenario
+# for p in 0.25 0.5; do
+#     for or in 1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0; do
+#         save_prefix="binary-woZ-Prev$(echo $p |tr '.' ',')-OR$(echo $or |tr '.' ',')"
+#         rm ~/.pytensor -rf
+#         python ./simulate_data.py --type_outcome binary --nSamples 100 --n_knowX_balance --nrepeat 100 --nKnowX 10 --prevalence $p --OR $or --save_prefix $save_prefix
+#         python ./run_simulation.py --type_outcome binary --target_data "./data/${save_prefix}*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 --save_prefix weak_info_wo_multi_imp
+#     done
+# done
+# python ./summary_simulation.py --res_files "weak_info_wo_multi_imp_binary-woZ*.nc" --index_name_configs OR --column_name_configs Prev
+
+
+# continue outcome, without Z, normal scenario
+# for beta0 in 0.5 1.0; do
+#     for betax in 0. 0.5 1.0 1.5 2.0 2.5 3.0 3.5; do
+#         save_prefix="continue-woZ-beta0$(echo $beta0 |tr '.' ',')-betax$(echo $betax |tr '.' ',')"
+#         rm ~/.pytensor -rf
+#         python ./simulate_data.py --type_outcome continue --nSamples 100 --nrepeat 100 --nKnowX 10 --betax $betax --beta0 $beta0 --save_prefix $save_prefix
+#         python ./run_simulation.py --type_outcome continue --target_data "./data/${save_prefix}*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 --save_prefix weak_info_wo_multi_imp
+#     done
+# done
+# python ./summary_simulation.py --res_files "weak_info_wo_multi_imp_continue-woZ*.nc" --index_name_configs betax --column_name_configs beta0
+
+# survival outcome, without Z, normal scenario
+for beta0 in 0.5 1.0; do
+    for betax in 0. 0.5 1.0 1.5 2.0 2.5 3.0 3.5; do
+        save_prefix="survival-woZ-beta0$(echo $beta0 |tr '.' ',')-betax$(echo $betax |tr '.' ',')"
+        rm ~/.pytensor -rf
+        python ./simulate_data.py --type_outcome survival --nSamples 100 --nrepeat 100 --nKnowX 10 --betax $betax --beta0 $beta0 --save_prefix $save_prefix
+        python ./run_simulation.py --type_outcome survival --target_data "./data/${save_prefix}*.h5" --ncores 20 --solver blackjax --ntunes 2000 --ndraws 2000 --save_prefix weak_info_wo_multi_imp
+    done
+done
+python ./summary_simulation.py --res_files "weak_info_wo_multi_imp_survival-woZ*.nc" --index_name_configs betax --column_name_configs beta0

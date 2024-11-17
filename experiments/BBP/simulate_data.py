@@ -69,12 +69,12 @@ def main():
     save_root = args.save_root
     os.makedirs(save_root, exist_ok=True)
 
-    if args.OR is not None and args.betax is not None:
-        logger.info(
-            "OR and betax are set simultaneously, "
-            f"use OR={args.OR}, betax={np.log(args.OR)}"
-        )
-    elif args.OR is not None:
+    if args.OR is not None:
+        if args.betax is not None:
+            logger.info(
+                "OR and betax are set simultaneously, "
+                f"use OR={args.OR}, betax={np.log(args.OR)}"
+            )
         args.betax = np.log(args.OR)
 
     # 这些参数的长度需要保持一致或者是scalar
