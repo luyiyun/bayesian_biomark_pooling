@@ -264,7 +264,7 @@ class Simulator:
             logit += zint
 
         if self.outcome_type == "continue":
-            sigma_y = np.repeat(self.sigma_y, self.n_samples_total)
+            sigma_y = np.repeat(self.sigma_y, self.n_samples)
             Y = rng.normal(logit, sigma_y)
         elif self.outcome_type == "binary":
             p = 1 / (np.exp(-logit) + 1)
