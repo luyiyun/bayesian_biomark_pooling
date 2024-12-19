@@ -493,8 +493,8 @@ def main():
                 for k, v in resi.items():
                     res_all[k].append(v)
 
-                if i >= 5:
-                    break
+                # if i >= 5:
+                #     break
 
         elif args.gpu:
             pass
