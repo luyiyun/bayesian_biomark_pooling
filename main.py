@@ -31,117 +31,6 @@ from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling import EMBP
 
 
-def plot_params_hist(params_hist: np.ndarray, names: np.ndarray, savefn: str):
-    nparams = params_hist.shape[1]
-    nr = int(np.sqrt(nparams))
-    nc = (nparams + nr - 1) // nr
-    fig, axs = plt.subplots(
-        nrows=nr, ncols=nc, figsize=(nc * 3, nr * 3), sharey=False
-    )
-    axs = axs.flatten()
-    for i in range(nparams):
-        pd.Series(params_hist[:, i]).plot(ax=axs[i])
-        axs[i].set_title(names[i])
-    fig.tight_layout()
-    fig.savefig(savefn)
-
-
-def temp_test_continue(ci=False, ve_method="bootstrap", seed=0):
-    root = "./results/tmp_embp"
-    os.makedirs(root, exist_ok=True)
-
-    simulator = Simulator(type_outcome="continue")
-    df = simulator.simulate(seed)
-    model = EMBP(
-        outcome_type="continue",
-        ci=ci,
-        ci_method=ve_method,
-        pbar=True,
-        seed=seed,
-    )
-    model.fit(df["X"].values, df["S"].values, df["W"].values, df["Y"].values)
-
-    params = model.params_
-    params_hist = model.params_hist_
-    plot_params_hist(
-        params_hist.values,
-        params_hist.columns.values,
-        os.path.join(root, "params_hist.png"),
-    )
-    if ci and (ve_method == "sem"):
-        R = model._estimator._R
-        np.save("./temp_R.npy", R)
-        plot_params_hist(
-            R[:, 14, :],
-            params_hist.columns.values,
-            os.path.join(root, "R_beta_x.png"),
-        )
-
-    print(params)
-
-
-def temp_test_binary(
-    ci=False,
-    seed=0,
-    beta_z=None,
-    nsample=100,
-    n_knowX=10,
-    beta_x=1.0,
-    binary_solve="lap",
-    # beta_0=None,
-    prevalence=0.5,
-    gpu=False,
-    ci_method="bootstrap",
-):
-    root = "./results/tmp_embp"
-    os.makedirs(root, exist_ok=True)
-
-    simulator = Simulator(
-        type_outcome="binary",
-        n_sample_per_studies=nsample,
-        n_knowX_per_studies=n_knowX,
-        sigma2_y=[0.5, 0.75, 1.0, 1.25],
-        sigma2_e=[0.5, 0.75, 1.0, 1.25],
-        beta_z=beta_z,
-        beta_x=beta_x,
-        beta_0=None,
-        prevalence=prevalence,
-    )
-    df = simulator.simulate(seed)
-    model = EMBP(
-        outcome_type="binary",
-        ci=ci,
-        # variance_estimate_method="bootstrap",
-        # max_iter=300,
-        pbar=True,
-        # n_importance_sampling=100,
-        device="cuda:0" if gpu else "cpu",
-        seed=seed,
-        binary_solve=binary_solve,
-        ci_method=ci_method,
-    )
-    model.fit(
-        df["X"].values,
-        df["S"].values,
-        df["W"].values,
-        df["Y"].values,
-        df.filter(like="Z", axis=1).values if beta_z is not None else None,
-    )
-
-    params = model.params_
-    params_hist = model.params_hist_
-    model.params_.to_csv(os.path.join(root, "binary_params.csv"))
-    params_hist.to_csv(os.path.join(root, "binary_hist.csv"))
-
-    plot_params_hist(
-        params_hist.values,
-        params_hist.columns.values,
-        os.path.join(root, "binary_params_hist.png"),
-    )
-
-    print(params)
-
-
 def method_xonly(
     X: np.ndarray,
     Y: np.ndarray,
@@ -175,63 +64,37 @@ def method_naive(
     return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
-def trial_once_by_simulator_and_estimator(
-    type_outcome: Literal["continue", "binary"],
-    simulator: Simulator,
-    estimator: EMBP | dict | None = None,
-    seed: int | None = None,
-    methods: Sequence[Literal["EMBP", "xonly", "naive"]] = (
-        "xonly",
-        "naive",
-        "EMBP",
-    ),
-    gpu_and_mp: bool = False,
-    logging: bool = False,
-    queue: None = None,
+def analyze_data(
+    X: np.ndarray,
+    Y: np.ndarray,
+    W: np.ndarray,
+    S: np.ndarray | None,
+    Z: np.ndarray | None,
+    gpu: bool,
+    ncores: int,
+    outcome_type: Literal["binary", "continue"],
+    methods: Sequence[Literal["embp", "xonly", "naive"]],
+    embp_kwargs: dict,
 ) -> dict[str, np.ndarray]:
-    if queue is not None:
-        estimator["device"] = queue.get()
-    device = estimator["device"]
-    if logging:
-        print(f"seed = {seed}, device = {device}, start.")
-        t1 = perf_counter()
-
-    if gpu_and_mp:
+    if gpu and ncores > 1:
         torch.set_num_threads(1)
-
-    # 1. generate data
-    df = simulator.simulate(seed=seed)
-    zind = df.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
-    X = df["X"].values
-    Y = df["Y"].values
-    W = df["W"].values
-    Z = df.loc[:, zind].values if zind.any() else None
-
-    # 2. other methods
-    res_all = {}
+    res = {}
     for methodi in methods:
         if methodi == "xonly":
-            res = method_xonly(X, Y, Z, type_outcome)
+            resi = method_xonly(X, Y, Z, outcome_type)
         elif methodi == "naive":
-            res = method_naive(W, Y, Z, type_outcome)
-        elif methodi == "EMBP":
-            # 3. run model
-            if estimator is None:
-                continue
-            elif isinstance(estimator, dict):
-                estimator = EMBP(**estimator)
-            estimator.fit(X, df["S"].values, W, Y, Z)
-            res = estimator.params_.values
-        res_all[methodi] = res
-
-    if logging:
-        t2 = perf_counter()
-        print(f"seed = {seed}, end, {t2-t1:.4f}s.")
-
-    if queue is not None:
-        queue.put(device)
-
-    return res_all
+            resi = method_naive(W, Y, Z, outcome_type)
+        elif methodi == "embp":
+            estimator = EMBP(
+                outcome_type=outcome_type,
+                **embp_kwargs,
+            )
+            estimator.fit(X, S, W, Y, Z)
+            resi = estimator.params_
+        else:
+            raise ValueError(f"Unknown method: {methodi}")
+        res[methodi] = resi
+    return res
 
 
 def main():
@@ -488,9 +351,15 @@ def main():
         action="store_true",
         help="whether to show progress bar when run embp, default is False",
     )
+    ana_parser.add_argument(
+        "-nc",
+        "--ncores",
+        default=1,
+        type=int,
+        help="number of cores to use, default is 1",
+    )
     # endregion
 
-    # parser.add_argument("-nc", "--ncores", default=1, type=int)
     # parser.add_argument("-t", "--test", action="store_true")
     # parser.add_argument(
     #     "-l",
@@ -581,46 +450,123 @@ def main():
         else:
             df_iter = df.groupby("repeat")
 
+        embp_kwargs = {
+            "ci": not args.no_ci,
+            "ci_method": args.ci_method,
+            "pbar": args.embp_progress_bar,
+            "max_iter": args.max_iter,
+            "seed": args.seed,
+            "n_bootstrap": args.n_bootstrap,
+            "gem": args.gem,
+            "quasi_mc_K": args.quasi_K,
+            "delta2": args.delta2,
+            "binary_solve": args.binary_solve,
+            "device": "cuda:0" if args.gpu else "cpu",
+            "importance_sampling_maxK": args.importance_sampling_maxK,
+        }
         res_all = {k: [] for k in args.methods}
-        for i, dfi in tqdm(df_iter, desc="Analyze: "):
-            zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
-            X = dfi["X"].values
-            Y = dfi["Y"].values
-            W = dfi["W"].values
-            Z = dfi.loc[:, zind].values if zind.any() else None
-            for methodi in args.methods:
-                if methodi == "xonly":
-                    res = method_xonly(X, Y, Z, simu_args["outcome_type"])
-                elif methodi == "naive":
-                    res = method_naive(W, Y, Z, simu_args["outcome_type"])
-                elif methodi == "embp":
-                    estimator = EMBP(
-                        outcome_type=simu_args["outcome_type"],
-                        ci=not args.no_ci,
-                        ci_method=args.ci_method,
-                        pbar=args.embp_progress_bar,
-                        max_iter=args.max_iter,
-                        seed=args.seed,
-                        n_bootstrap=args.n_bootstrap,
-                        gem=args.gem,
-                        quasi_mc_K=args.quasi_K,
-                        delta2=args.delta2,
-                        binary_solve=args.binary_solve,
-                        device="cuda:0" if args.gpu else "cpu",
-                        importance_sampling_maxK=args.importance_sampling_maxK,
-                    )
-                    estimator.fit(X, dfi["S"].values, W, Y, Z)
-                    res = estimator.params_
-                else:
-                    raise ValueError(f"Unknown method: {methodi}")
-                res_all[methodi].append(res)
 
-            if i >= 5:
-                break
+        if args.ncores <= 1:
+            for i, dfi in tqdm(df_iter, desc="Analyze: "):
+                zind = dfi.columns.map(
+                    lambda x: re.search(r"Z\d*", x) is not None
+                )
+                X = dfi["X"].values
+                Y = dfi["Y"].values
+                W = dfi["W"].values
+                S = dfi["S"].values
+                Z = dfi.loc[:, zind].values if zind.any() else None
+
+                resi = analyze_data(
+                    X,
+                    Y,
+                    W,
+                    S,
+                    Z,
+                    args.gpu,
+                    args.ncores,
+                    simu_args["outcome_type"],
+                    args.methods,
+                    embp_kwargs,
+                )
+
+                for k, v in resi.items():
+                    res_all[k].append(v)
+
+                if i >= 5:
+                    break
+
+        elif args.gpu:
+            pass
+            # n_cudas = torch.cuda.device_count()
+            # if n_cudas != args.ncores:
+            #     print(
+            #         f"Only {n_cudas} gpus, thus "
+            #         f"open {n_cudas} subprocesses, not {args.ncores}."
+            #     )
+
+            # manager = mp_torch.Manager()
+            # q = manager.Queue()
+            # for i in range(n_cudas):
+            #     q.put(f"cuda:{i}")
+
+            # with mp_torch.Pool(n_cudas) as pool:
+            #     tmp_reses = [
+            #         pool.apply_async(
+            #             trial_once_by_simulator_and_estimator,
+            #             kwds={
+            #                 "type_outcome": args.outcome_type,
+            #                 "simulator": simulator,
+            #                 "estimator": embp_kwargs,
+            #                 "seed": j + seedi,
+            #                 "methods": args.methods,
+            #                 "gpu_and_mp": False,
+            #                 "logging": False,
+            #                 "queue": q,
+            #             },
+            #         )
+            #         for j in range(args.nrepeat)
+            #     ]
+            #     for tmp_resi in tqdm(tmp_reses):
+            #         resi = tmp_resi.get()
+            #         for k, arr in resi.items():
+            #             res_arrs.setdefault(k, []).append(arr)
+        else:  # use cpu multi-processing
+            with mp.Pool(args.ncores) as pool:
+                tmp_reses = []
+                for i, dfi in df_iter:
+                    zind = dfi.columns.map(
+                        lambda x: re.search(r"Z\d*", x) is not None
+                    )
+                    X = dfi["X"].values
+                    Y = dfi["Y"].values
+                    W = dfi["W"].values
+                    S = dfi["S"].values
+                    Z = dfi.loc[:, zind].values if zind.any() else None
+                    tmp_resi = pool.apply_async(
+                        analyze_data,
+                        (
+                            X,
+                            Y,
+                            W,
+                            S,
+                            Z,
+                            args.gpu,
+                            args.ncores,
+                            simu_args["outcome_type"],
+                            args.methods,
+                            embp_kwargs,
+                        ),
+                    )
+                    tmp_reses.append(tmp_resi)
+                for tmp_resi in tqdm(tmp_reses):
+                    resi = tmp_resi.get()
+                    for k, v in resi.items():
+                        res_all[k].append(v)
 
         res_all = {
             k: xr.DataArray(
-                np.stack(v, axis=0),
+                np.stack(v.values, axis=0),
                 dims=("repeat", "params", "statistic"),
                 coords={
                     "params": v[0].index.values,
