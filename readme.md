@@ -63,5 +63,6 @@ To reproduce the results, you can run the following code:
     ```bash
     python main.py simulate --n_studies 4 --n_samples 20 --output_dir data/simu
     python main.py analyze --data_dir data/simu --output_dir results/simu
+    python main.py evaluate --analyzed_dir results/simu --output_file evaluation.csv
     ```
     you can run `python main.py --help` to see all available commands and options.
