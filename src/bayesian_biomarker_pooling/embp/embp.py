@@ -40,7 +40,9 @@ def bootstrap_estimator(
     )
 
     params_bs = []
-    for i in tqdm(range(n_repeat), disable=not pbar):
+    for i in tqdm(
+        range(n_repeat), disable=not pbar, desc="Bootstrap: ", leave=False
+    ):
         try:
             ind_bs = ind_bootstrap[i]
             estimator.run(
@@ -250,8 +252,8 @@ class EMBP(BiomarkerPoolBase):
 
         if self.ci_method_ == "bootstrap":
             # 使用boostrap方法
-            if self.pbar_:
-                print("Bootstrap: ")
+            # if self.pbar_:
+            #     print("Bootstrap: ")
             res_bootstrap = bootstrap_estimator(
                 # 使用复制品，而非原始的estimator
                 estimator=deepcopy(self._estimator),

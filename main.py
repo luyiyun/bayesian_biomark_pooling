@@ -10,6 +10,7 @@ from argparse import ArgumentParser
 from itertools import product
 from copy import deepcopy
 from time import perf_counter
+from collections import defaultdict
 
 # os.environ["OMP_NUM_THREADS"] = "1"
 # os.environ["MKL_NUM_THREADS"] = "1"
@@ -239,6 +240,7 @@ def main():
     # args["subcommand"]将会是子命令的名称
 
     # ============= 子命令：生成模拟数据 =============
+    # region
     simu_parser = subparsers.add_parser(
         "simulate", help="generate simulated data"
     )
@@ -377,15 +379,117 @@ def main():
         type=int,
         help="number of repeats, default is 1000",
     )
+    # endregion
 
     # ============= 子命令：分析模拟数据 =============
-    # parser.add_argument(
-    #     "-m",
-    #     "--methods",
-    #     default=("EMBP", "xonly", "naive"),
-    #     nargs="+",
-    #     choices=("EMBP", "xonly", "naive"),
-    # )
+    # region
+    ana_parser = subparsers.add_parser(
+        "analyze", help="analyze simulated data"
+    )
+    ana_parser.add_argument(
+        "-dd",
+        "--data_dir",
+        default="./results/simulated_data",
+        help=(
+            "path to simulated data, default is " "./results/simulated_data"
+        ),
+    )
+    ana_parser.add_argument(
+        "-od",
+        "--output_dir",
+        default="./results/analyzed_results",
+        help="path to save analyzed results, "
+        "default is ./results/analyzed_results",
+    )
+    ana_parser.add_argument(
+        "-m",
+        "--methods",
+        default=("embp", "xonly", "naive"),
+        nargs="+",
+        choices=("embp", "xonly", "naive"),
+        help="methods to compare, default is embp, xonly, naive",
+    )
+    ana_parser.add_argument(
+        "--no_ci",
+        action="store_true",
+        help="whether to use confidence interval, default is False (use CI)",
+    )
+    ana_parser.add_argument(
+        "--ci_method",
+        default="bootstrap",
+        choices=("bootstrap", "sem"),
+        help="method to estimate CI, default is bootstrap",
+    )
+    ana_parser.add_argument(
+        "--max_iter",
+        default=None,
+        type=int,
+        help="maximum number of iterations, default is None "
+        "(500 for continue, 300 for binary)",
+    )
+    ana_parser.add_argument(
+        "--seed",
+        default=0,
+        type=int,
+        help="random seed, default is 0",
+    )
+    ana_parser.add_argument(
+        "--n_bootstrap",
+        default=200,
+        type=int,
+        help="number of bootstrap samples for CI estimation, default is 200",
+    )
+    ana_parser.add_argument(
+        "--gem",
+        action="store_true",
+        help="whether to use generalized EM for binary outcome (M step "
+        "only update one Newton step), default is False (use traditional EM)",
+    )
+    ana_parser.add_argument(
+        "-qK",
+        "--quasi_K",
+        default=100,
+        type=int,
+        help="number of quasi-MC samples for binary outcome, default is 100",
+    )
+    ana_parser.add_argument(
+        "-bs",
+        "--binary_solve",
+        default="lap",
+        choices=["lap", "is"],
+        help="method to aproximate posterior distribution for binary "
+        "outcome, can be lap(Laplace approximation) or "
+        "is(importance sampling), default is lap",
+    )
+    ana_parser.add_argument(
+        "-ismk",
+        "--importance_sampling_maxK",
+        default=5000,
+        type=int,
+        help="maximum number of samples for importance sampling, "
+        "default is 5000",
+    )
+    ana_parser.add_argument(
+        "-g",
+        "--gpu",
+        action="store_true",
+        help="whether to use GPU, default is False",
+    )
+    ana_parser.add_argument(
+        "--delta2",
+        default=None,
+        type=float,
+        help="delta2 for stop criterion, default is None "
+        "(1e-5 for continue, 1e-2 for binary)",
+    )
+    ana_parser.add_argument(
+        "-epb",
+        "--embp_progress_bar",
+        action="store_true",
+        help="whether to show progress bar when run embp, default is False",
+    )
+    # endregion
+
     # parser.add_argument("-nc", "--ncores", default=1, type=int)
     # parser.add_argument("-t", "--test", action="store_true")
     # parser.add_argument(
@@ -399,28 +503,37 @@ def main():
     # parser.add_argument("--name", default=None)
     # parser.add_argument("--skip", default=None, nargs="*", type=str)
 
-    # parser.add_argument("--no_ci", action="store_true")
-    # parser.add_argument(
-    #     "--ci_method", default="bootstrap", choices=("bootstrap", "sem")
-    # )
-    # parser.add_argument("--max_iter", default=None, type=int)
-    # parser.add_argument("--seed", default=0, type=int)
-    # parser.add_argument("--n_bootstrap", default=200, type=int)
-    # parser.add_argument("--gem", action="store_true")
-    # parser.add_argument("-qK", "--quasi_K", default=100, type=int)
-    # parser.add_argument(
-    #     "-bs", "--binary_solve", default="lap", choices=["lap", "is"]
-    # )
-    # parser.add_argument("-g", "--gpu", action="store_true")
-    # parser.add_argument("--delta2", default=None, type=float)
-    # parser.add_argument(
-    #     "-ismK", "--importance_sampling_maxK", default=5000, type=int
-    # )
+    # ============= 子命令：计算评价指标 =============
+    # region
+    eval_parser = subparsers.add_parser(
+        "evaluate", help="evaluate the performance of methods"
+    )
+    eval_parser.add_argument(
+        "-ad",
+        "--analyzed_dir",
+        default="./results/analyzed_results",
+        help="path to save evaluated results, "
+        "default is ./results/evaluated_results",
+    )
+    eval_parser.add_argument(
+        "-of",
+        "--output_file",
+        default="evaluated_results.csv",
+        help="path to save evaluated results, "
+        "default is evaluated_results.csv",
+    )
+    # endregion
 
     args = parser.parse_args()
 
     # ================= 模拟数据，并保存 =================
     if args.subcommand == "simulate":
+        if osp.exists(args.output_dir):
+            raise ValueError(
+                f"Output directory {args.output_dir} already "
+                "exists, please remove it first."
+            )
+
         simulator = Simulator(
             n_studies=args.n_studies,
             n_samples=args.n_samples,
@@ -437,19 +550,144 @@ def main():
         )
 
         df_all = []
-        for i in tqdm(range(args.n_repeats)):
+        for i in tqdm(range(args.n_repeats), desc="Simulate: "):
             df = simulator.simulate(seed=i)
             df["repeat"] = i
             df_all.append(df)
         df_all = pd.concat(df_all, ignore_index=True)
 
-        os.makedirs(args.output_dir, exist_ok=True)
+        os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
         df_all.to_csv(osp.join(args.output_dir, "data.csv"), index=False)
         simulator.save(osp.join(args.output_dir, "params.json"))
 
         return
 
     # ================= 读取模拟数据，进行模拟实验 =================
+    if args.subcommand == "analyze":
+        if osp.exists(args.output_dir):
+            raise ValueError(
+                f"Output directory {args.output_dir} already "
+                "exists, please remove it first."
+            )
+
+        fn = osp.join(args.data_dir, "data.csv")
+        df = pd.read_csv(fn, index_col=None)
+
+        with open(osp.join(args.data_dir, "params.json"), "r") as f:
+            simu_args = json.load(f)
+
+        if "repeat" not in df.columns:
+            df_iter = [(0, df)]
+        else:
+            df_iter = df.groupby("repeat")
+
+        res_all = {k: [] for k in args.methods}
+        for i, dfi in tqdm(df_iter, desc="Analyze: "):
+            zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
+            X = dfi["X"].values
+            Y = dfi["Y"].values
+            W = dfi["W"].values
+            Z = dfi.loc[:, zind].values if zind.any() else None
+            for methodi in args.methods:
+                if methodi == "xonly":
+                    res = method_xonly(X, Y, Z, simu_args["outcome_type"])
+                elif methodi == "naive":
+                    res = method_naive(W, Y, Z, simu_args["outcome_type"])
+                elif methodi == "embp":
+                    estimator = EMBP(
+                        outcome_type=simu_args["outcome_type"],
+                        ci=not args.no_ci,
+                        ci_method=args.ci_method,
+                        pbar=args.embp_progress_bar,
+                        max_iter=args.max_iter,
+                        seed=args.seed,
+                        n_bootstrap=args.n_bootstrap,
+                        gem=args.gem,
+                        quasi_mc_K=args.quasi_K,
+                        delta2=args.delta2,
+                        binary_solve=args.binary_solve,
+                        device="cuda:0" if args.gpu else "cpu",
+                        importance_sampling_maxK=args.importance_sampling_maxK,
+                    )
+                    estimator.fit(X, dfi["S"].values, W, Y, Z)
+                    res = estimator.params_
+                else:
+                    raise ValueError(f"Unknown method: {methodi}")
+                res_all[methodi].append(res)
+
+            if i >= 5:
+                break
+
+        res_all = {
+            k: xr.DataArray(
+                np.stack(v, axis=0),
+                dims=("repeat", "params", "statistic"),
+                coords={
+                    "params": v[0].index.values,
+                    "statistic": v[0].columns.values,
+                },
+            )
+            if k == "embp"
+            else xr.DataArray(
+                np.stack(v, axis=0)[:, None, :],
+                dims=("repeat", "params", "statistic"),
+                coords={
+                    "params": ["beta_x"],
+                    "statistic": ["estimate", "CI_1", "CI_2"],
+                },
+            )
+            for k, v in res_all.items()
+        }
+        res_all = xr.Dataset(res_all)
+
+        os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
+        res_all.to_netcdf(osp.join(args.output_dir, "analyzed_results.nc"))
+        with open(osp.join(args.output_dir, "params.json"), "w") as f:
+            ana_args = args.__dict__
+            json.dump(ana_args, f)
+
+        return
+
+    # ================= 读取实验结果和模拟参数，计算评价指标 =================
+    if args.subcommand == "evaluate":
+        if osp.exists(args.output_file):
+            raise ValueError(
+                f"Output file {args.output_file} already "
+                "exists, please remove it first."
+            )
+
+        with open(osp.join(args.analyzed_dir, "params.json"), "r") as f:
+            ana_args = json.load(f)
+        with open(osp.join(ana_args["data_dir"], "params.json"), "r") as f:
+            simu_args = json.load(f)
+        true_beta_x = simu_args["beta_x"]
+
+        res = xr.load_dataset(
+            osp.join(args.analyzed_dir, "analyzed_results.nc")
+        )
+        index, res_df = [], defaultdict(list)
+        for k, da in res.items():
+            index.append(k)
+            diff = (
+                da.sel(params="beta_x", statistic="estimate").values
+                - true_beta_x
+            )
+            res_df["bias"].append(diff.mean())
+            res_df["mse"].append((diff**2).mean())
+            if not ana_args["no_ci"]:
+                in_ci = (
+                    da.sel(params="beta_x", statistic="CI_1").values
+                    <= true_beta_x
+                ) & (
+                    da.sel(params="beta_x", statistic="CI_2").values
+                    >= true_beta_x
+                )
+                res_df["cov_rate"].append(in_ci.mean())
+
+        res_df = pd.DataFrame(res_df, index=index)
+        print(res_df)
+        res_df.to_csv(args.output_file)
+
     # if args.gpu:
     #     mp_torch.set_start_method("spawn")
 
