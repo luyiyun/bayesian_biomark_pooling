@@ -1,15 +1,17 @@
-import logging
+# import logging
 import os
 import os.path as osp
 import multiprocessing as mp
 import re
 import json
-from datetime import datetime
+
+# from datetime import datetime
 from typing import Literal, Sequence
 from argparse import ArgumentParser
-from itertools import product
-from copy import deepcopy
-from time import perf_counter
+
+# from itertools import product
+# from copy import deepcopy
+# from time import perf_counter
 from collections import defaultdict
 
 # os.environ["OMP_NUM_THREADS"] = "1"
@@ -21,11 +23,13 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import xarray as xr
-import matplotlib.pyplot as plt
+
+# import matplotlib.pyplot as plt
 from tqdm import tqdm
 import statsmodels.api as sm
 import torch
-import torch.multiprocessing as mp_torch
+
+# import torch.multiprocessing as mp_torch
 from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling import EMBP
 
@@ -139,7 +143,7 @@ def main():
         ),
     )
     simu_parser.add_argument(
-        "--ratio_observed_X",
+        "--ratio_observed_x",
         default=0.1,
         type=float,
         nargs="+",
@@ -390,19 +394,23 @@ def main():
                 "exists, please remove it first."
             )
 
+        def proc_args(x):
+            return x[0] if isinstance(x, list) and len(x) == 1 else x
+
         simulator = Simulator(
             n_studies=args.n_studies,
-            n_samples=args.n_samples,
-            ratio_observed_X=args.ratio_observed_X,
+            n_samples=proc_args(args.n_samples),
+            ratio_observed_X=proc_args(args.ratio_observed_x),
             outcome_type=args.outcome_type,
             beta_x=args.beta_x,
-            beta_0=args.beta_0,
-            a=args.a,
-            b=args.b,
-            sigma2_e=args.sigma2_e,
-            sigma2_y=args.sigma2_y,
-            prevalence=args.prevalence,
+            beta_0=proc_args(args.beta_0),
+            a=proc_args(args.a),
+            b=proc_args(args.b),
+            sigma2_e=proc_args(args.sigma2_e),
+            sigma2_y=proc_args(args.sigma2_y),
+            prevalence=proc_args(args.prevalence),
             n_z=0 if args.beta_z is None else len(args.beta_z),
+            beta_z=args.beta_z,
         )
 
         df_all = []
@@ -553,7 +561,7 @@ def main():
 
         res_all = {
             k: xr.DataArray(
-                np.stack(v.values, axis=0),
+                np.stack([vi.values for vi in v], axis=0),
                 dims=("repeat", "params", "statistic"),
                 coords={
                     "params": v[0].index.values,
