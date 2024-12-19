@@ -26,7 +26,6 @@ from tqdm import tqdm
 import statsmodels.api as sm
 import torch
 import torch.multiprocessing as mp_torch
-
 from bayesian_biomarker_pooling.simulate import Simulator
 from bayesian_biomarker_pooling import EMBP
 
@@ -359,18 +358,6 @@ def main():
         help="number of cores to use, default is 1",
     )
     # endregion
-
-    # parser.add_argument("-t", "--test", action="store_true")
-    # parser.add_argument(
-    #     "-l",
-    #     "--log",
-    #     default="warn",
-    #     choices=["error", "warn", "info", "debug"],
-    # )
-    # parser.add_argument("--pbar", action="store_true")
-    # parser.add_argument("--root", default="./results/embp/")
-    # parser.add_argument("--name", default=None)
-    # parser.add_argument("--skip", default=None, nargs="*", type=str)
 
     # ============= 子命令：计算评价指标 =============
     # region

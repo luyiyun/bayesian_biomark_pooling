@@ -1,10 +1,10 @@
-**/__pycache__/
-results/*
-experiments/results/
+__pycache__/
+results/
+*.egg-info/
+
 *.ipynb
-**/*.egg-info/
 *.npy
 *.csv
 *.ps
 *.png
-test.json
+*.json
