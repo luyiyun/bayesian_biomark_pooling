@@ -9,6 +9,7 @@ To reproduce the results, you can run the following code:
     ```bash
     git clone https://github.com/luyiyun/bayesian_biomarker_pooling.git
     cd bayesian_biomarker_pooling
+    git checkout embp
     ```
 
 2. Create a new conda/mamba environment and install the required packages:
