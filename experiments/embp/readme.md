@@ -7,7 +7,7 @@ To reproduce the results, you can run the following code:
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/luyiyun/bayesian_biomarker_pooling.git
+    git clone https://github.com/luyiyun/bayesian_biomark_pooling.git
     cd bayesian_biomarker_pooling
     git checkout embp
     ```
