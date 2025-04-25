@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 # -------------------------------- project --------------------------------
 [project]
 name = "bayesian_biomarker_pooling"
-version = "0.0.1"
+version = "0.1.1"
 authors = [{ name = "Rong Zhiwei", email = "18845728185@163.com" }]
 license = { file = "LICENSE" }
 description = "A package for integrated analysis of biomarker clinical trial data."
