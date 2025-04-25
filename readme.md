@@ -7,8 +7,8 @@ In this study, we introduce a novel Bayesian Biomarker Pooling (BBP) method, emp
 ```bash
 # We suggest creating a separate environment. Below is an example using mamba (fast alternative of conda)
 mamba create -n bbp_env python=3.11 -y
-# Install mmAAVI package from github
-pip install git+https://github.com/luyiyun/mmAAVI.git@main
+# Install BBP package from github
+pip install git+https://github.com/luyiyun/bayesian_biomark_pooling.git@main
 ```
 
 ## Usage

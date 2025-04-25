@@ -2,3 +2,5 @@
 results/*
 experiments/results/
 *.ipynb
+*.csv
+*.npy
