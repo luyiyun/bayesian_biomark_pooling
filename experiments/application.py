@@ -32,12 +32,17 @@ def main():
     model = BBP(
         ntunes=5000,
         nsample=5000,
-        prior_x=(0, 10, 2, 1),
-        prior_a=(0, 10, 2, 1),
-        prior_b=(0, 10, 2, 1),
-        prior_beta0=(0, 10, 2, 1),
-        prior_sigma=(2, 1),
-        nchains=1
+        prior_x_dist="normal-normal-invgamma",
+        prior_x_args=(0, 10, 2, 1),
+        prior_a_dist="normal-normal-invgamma",
+        prior_a_args=(0, 10, 2, 1),
+        prior_b_dist="normal-normal-invgamma",
+        prior_b_args=(0, 10, 2, 1),
+        prior_beta0_dist="normal-normal-invgamma",
+        prior_beta0_args=(0, 10, 2, 1),
+        prior_sigma_dist="invgamma",
+        prior_sigma_args=(2, 1),
+        nchains=1,
     )
 
     model.fit(dat)
