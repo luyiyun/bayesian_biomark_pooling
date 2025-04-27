@@ -351,7 +351,7 @@ def main():
                         bar.update()
             return summ_res
 
-        with tqdm(desc="BPP (multi-processing): ", total=args.nrepeat) as bar:
+        with tqdm(desc="BBP (multi-processing): ", total=args.nrepeat) as bar:
             if args.block_size is None:
                 _remove_cache(args.pytensor_cache, bar)
                 esti_res = _mp_block(0, args.nrepeat, bar)
