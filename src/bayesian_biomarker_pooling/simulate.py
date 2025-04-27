@@ -237,17 +237,17 @@ class Simulator:
                 raise ValueError("nsamples(%d) < nKnowX(%d)" % (ni, nxi))
             elif ni > nxi:
                 if self.n_knowX_balance:
-                    n_nan = ni - nxi
-                    n_nan_0 = n_nan // 2
-                    n_nan_1 = n_nan - n_nan_0
                     Yi = Y[start:end]
+                    n_nan = ni - nxi
+                    n_nan_0 = int(n_nan * (Yi == 0).mean())
+                    n_nan_1 = n_nan - n_nan_0
                     nan_ind0 = rng.choice(
                         np.nonzero(Yi == 0)[0], n_nan_0, replace=False
                     )
                     nan_ind1 = rng.choice(
                         np.nonzero(Yi == 1)[0], n_nan_1, replace=False
                     )
-                    nan_ind = np.concatenate([nan_ind0, nan_ind1])
+                    nan_ind = np.concatenate([nan_ind0, nan_ind1]) + start
                 else:
                     nan_ind = rng.choice(np.arange(start, end), ni - nxi, replace=False)
                 X_obs[nan_ind] = np.nan
