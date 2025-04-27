@@ -393,14 +393,14 @@ def main():
     )
 
     # bayesian inference settings
-    parser.add_argument("--prior_betax_args", type=int, nargs=2, default=(0.0, 1.0))
+    parser.add_argument("--prior_betax_args", type=int, nargs=2, default=(0.0, 10.0))
     parser.add_argument(
         "--prior_sigma_dist",
         type=str,
         choices=["halfcauchy", "invgamma", "invgamma-gamma-gamma"],
         default="invgamma",
     )
-    parser.add_argument("--prior_sigma_args", type=int, nargs="+", default=(1.0, 1.0))
+    parser.add_argument("--prior_sigma_args", type=int, nargs="+", default=(2.0, 1.0))
     parser.add_argument(
         "--prior_a_dist",
         type=str,
