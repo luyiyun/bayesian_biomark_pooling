@@ -46,13 +46,14 @@ all_hidden_variables: List[str] = [
     "mu_x",
     "sigma_x",
     "X_no_obs",
+    "betaz",
 ]
 
 
 def set_hyper_prior(
     prior_dist: HYPER_PRIOR_DIST,
     prior_args: HYPER_PRIOR_ARGS,
-    n_studies: int,
+    n_studies: int | None,
     name: str,
     obs: np.ndarray | None = None,
 ) -> Tuple[
@@ -65,7 +66,9 @@ def set_hyper_prior(
         return dist, *prior_args
 
     hyper_mu = pm.Normal(
-        f"mu_{name}", mu=prior_args[0], sigma=prior_args[1], observed=obs
+        f"mu_{name}",
+        mu=prior_args[0],
+        sigma=prior_args[1],
     )
     if prior_dist == "normal-normal-halfcauchy":
         hyper_sigma = pm.HalfCauchy(f"sigma_{name}", prior_args[2])
@@ -106,18 +109,18 @@ def set_sigma_prior(
 @dataclass
 class BBP:
     prior_betax_args: Tuple[float, float] = (0.0, 10.0)
-    prior_x_dist: HYPER_PRIOR_DIST = "normal-normal-halfcacuchy"
+    prior_x_dist: HYPER_PRIOR_DIST = "normal-normal-halfcauchy"
     prior_x_args: HYPER_PRIOR_ARGS | None = (0, 10.0, 1.0)
     prior_sigma_dist: SIGMA_PRIOR_DIST = "halfcauchy"
     prior_sigma_args: SIGMA_PRIOR_ARGS = 1.0
-    prior_a_dist: HYPER_PRIOR_DIST = "normal-normal-halfcacuchy"
+    prior_a_dist: HYPER_PRIOR_DIST = "normal-normal-halfcauchy"
     prior_a_args: HYPER_PRIOR_ARGS = (0.0, 10.0, 1.0)
-    prior_b_dist: HYPER_PRIOR_DIST = "normal-normal-halfcacuchy"
+    prior_b_dist: HYPER_PRIOR_DIST = "normal-normal-halfcauchy"
     prior_b_args: HYPER_PRIOR_ARGS = (0.0, 10.0, 1.0)
-    prior_beta0_dist: HYPER_PRIOR_DIST = "normal-normal-halfcacuchy"
+    prior_beta0_dist: HYPER_PRIOR_DIST = "normal-normal-halfcauchy"
     prior_beta0_args: HYPER_PRIOR_ARGS = (0.0, 10.0, 1.0)
     prior_betaz_args: Tuple[float, float] = (0.0, 10.0)
-    solver: Literal["pymc", "vi"] = "pymc"
+    solver: Literal["pymc", "vi", "blackjax"] = "pymc"
     nsample: int = 1000
     ntunes: int = 1000
     nchains: int = 4
@@ -125,8 +128,21 @@ class BBP:
     seed: int = 0
 
     def __post_init__(self):
+        if self.solver == "blackjax":
+            try:
+                import blackjax
+            except ImportError:
+                raise ImportError("Please install blackjax to use blackjax as solver")
         for prior_name in ["x", "a", "b", "beta0"]:
             dist = getattr(self, f"prior_{prior_name}_dist")
+            assert dist in [
+                "normal",
+                "normal-normal-halfcauchy",
+                "normal-normal-invgamma",
+            ], (
+                f"prior_{prior_name}_dist must be one of 'normal', 'normal-normal-halfcauchy', 'normal-normal-invgamma'"
+                f", but got {dist}"
+            )
             args = getattr(self, f"prior_{prior_name}_args")
             if dist == "normal":
                 if prior_name == "x":
@@ -171,7 +187,7 @@ class BBP:
         # TODO: assert prior_x
         with pm.Model() as model:
             betax = pm.Normal(
-                "betax", mu=self.prior_betax[0], sigma=self.prior_betax[1]
+                "betax", mu=self.prior_betax_args[0], sigma=self.prior_betax_args[1]
             )
             sigma_ws = set_sigma_prior(
                 self.prior_sigma_dist,
@@ -193,7 +209,7 @@ class BBP:
                 pm.Normal("X_obs", mu_x, sigma_x, observed=X_Know)
             else:
                 _, mu_x, sigma_x = set_hyper_prior(
-                    self.pror_x_dist, self.prior_x_args, n_xKnow, "X_obs", obs=X_Know
+                    self.prior_x_dist, self.prior_x_args, None, "X_obs", obs=X_Know
                 )
 
             X_no_obs = pm.Normal(
@@ -227,9 +243,9 @@ class BBP:
                 )
                 pm.Bernoulli(
                     "Y_%d_no_obs_X" % i,
-                    logit_p=beta0s[i] + betax * X_no_obs_i
+                    logit_p=(beta0s[i] + betax * X_no_obs_i)
                     if self.n_Z == 0
-                    else beta0s[i] + betax * X_no_obs_i + Z * betaz,
+                    else (beta0s[i] + betax * X_no_obs_i + pm.math.dot(Z, betaz)),
                     observed=Y,
                 )
                 start = end
@@ -247,15 +263,15 @@ class BBP:
                 )
                 pm.Bernoulli(
                     "Y_%d_obs_X" % i,
-                    logit_p=beta0s[i] + betax * X
+                    logit_p=(beta0s[i] + betax * X)
                     if self.n_Z == 0
-                    else beta0s[i] + betax * X_no_obs_i + Z * betaz,
+                    else (beta0s[i] + betax * X + pm.math.dot(Z, betaz)),
                     observed=Y,
                 )
 
         return model
 
-    def _train_model(self) -> Union[pm.Approximation, az.InferenceData]:
+    def _train_model(self, **kwargs: dict) -> Union[pm.Approximation, az.InferenceData]:
         with self.model_:
             if self.solver == "vi":
                 res = pm.fit(progressbar=self.pbar, random_seed=self.seed)
@@ -266,8 +282,9 @@ class BBP:
                     chains=self.nchains,
                     cores=self.nchains,
                     progressbar=self.pbar,
-                    random_seed=list(range(self.seed, self.seed + self.nchains)),
+                    random_seed=self.seed,
                     nuts_sampler=self.solver,
+                    **kwargs,
                 )
         return res
 
@@ -279,6 +296,7 @@ class BBP:
         W_col: str = "W",
         Y_col: str = "Y",
         Z_col: List[str] | None = None,
+        **kwargs: dict,
     ) -> None:
         self.n_Z = len(Z_col) if Z_col is not None else 0
 
@@ -327,7 +345,7 @@ class BBP:
             WY_xUnKnow=WY_xUnKnow,
         )
 
-        self.res_ = self._train_model()
+        self.res_ = self._train_model(**kwargs)
 
     def summary(
         self,
