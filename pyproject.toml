@@ -29,6 +29,7 @@ develop = [
     "seaborn>=0.12.2",
     "build",
     "pytest",
+    "blackjax"
 ]
 test = ["pytest"]
 

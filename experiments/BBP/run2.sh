@@ -1,7 +1,7 @@
 prevalence=(0.25 0.5)
 OR=(1.25 1.5 1.75 2.0 2.25 2.5 2.75 3.0)
-nrepeat=10
-ncores=2
+nrepeat=100
+ncores=10
 nSamples="100 100 100 100"
 nKnowX="10 10 10 10"
 
