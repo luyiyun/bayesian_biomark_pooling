@@ -1,6 +1,8 @@
 **/__pycache__/
 results/*
 experiments/results/
+data/
+results/
 *.ipynb
 **/*.egg-info/
 *.npy
