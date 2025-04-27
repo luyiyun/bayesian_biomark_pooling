@@ -1,11 +1,11 @@
-**/__pycache__/
-results/*
+__pycache__/
 experiments/results/
 data/
 results/
+*.egg-info/
 *.ipynb
-**/*.egg-info/
 *.npy
 *.csv
 *.ps
 *.png
+*.json

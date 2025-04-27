@@ -69,6 +69,7 @@ class EM:
                 range(1, self._max_iter + 1),
                 desc="EM: ",
                 disable=not self._pbar,
+                leave=False,
             ):
                 self.e_step(params)
                 params_new = self.m_step(params)
