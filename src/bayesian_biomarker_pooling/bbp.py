@@ -23,6 +23,7 @@ HYPER_PRIOR_ARGS = (
 SIGMA_PRIOR_DIST = Literal["halfcauchy", "invgamma", "invgamma-gamma-gamma"]
 SIGMA_PRIOR_ARGS = (
     float
+    | Tuple[float]
     | Tuple[float, float]
     | Tuple[float, float, float]
     | Tuple[float, float, float, float]
@@ -93,7 +94,12 @@ def set_sigma_prior(
     obs: np.ndarray | None = None,
 ) -> pm.InverseGamma:
     if prior_dist == "halfcauchy":
-        return pm.HalfCauchy(name, prior_args, size=n_studies, observed=obs)
+        return pm.HalfCauchy(
+            name,
+            prior_args if isinstance(prior_args, float) else prior_args[0],
+            size=n_studies,
+            observed=obs,
+        )
     elif prior_dist == "invgamma":
         return pm.InverseGamma(
             name, alpha=prior_args[0], beta=prior_args[1], size=n_studies, observed=obs
@@ -163,9 +169,10 @@ class BBP:
                 )
 
         if self.prior_sigma_dist == "halfcauchy":
-            assert isinstance(self.prior_sigma_args, float), (
-                "prior_sigma_args must be float for halfcauchy distribution"
-            )
+            assert (
+                isinstance(self.prior_sigma_args, float)
+                or len(self.prior_sigma_args) == 1
+            ), "prior_sigma_args must be float or 1-tuple for halfcauchy distribution"
         elif self.prior_sigma_dist == "invgamma":
             assert len(self.prior_sigma_args) == 2, (
                 "prior_sigma_args must be 2-tuple for invgamma distribution"

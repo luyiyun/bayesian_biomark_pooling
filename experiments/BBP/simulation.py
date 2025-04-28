@@ -103,7 +103,7 @@ def main():
     parser.add_argument(
         "--save_action", choices=["cover", "raise", "ignore"], default="raise"
     )
-    parser.add_argument("--summarize_target_pattern", type=str, default=None)
+    parser.add_argument("--summarize_target_dir", type=str, default="./results/")
     parser.add_argument("--summarize_save_fn", type=str, default=None)
 
     parser.add_argument("--nrepeat", type=int, default=10)
@@ -147,14 +147,14 @@ def main():
     )
 
     # bayesian inference settings
-    parser.add_argument("--prior_betax_args", type=int, nargs=2, default=(0.0, 10.0))
+    parser.add_argument("--prior_betax_args", type=float, nargs=2, default=(0.0, 10.0))
     parser.add_argument(
         "--prior_sigma_dist",
         type=str,
         choices=["halfcauchy", "invgamma", "invgamma-gamma-gamma"],
         default="invgamma",
     )
-    parser.add_argument("--prior_sigma_args", type=int, nargs="+", default=(2.0, 1.0))
+    parser.add_argument("--prior_sigma_args", type=float, nargs="+", default=(2.0, 1.0))
     parser.add_argument(
         "--prior_a_dist",
         type=str,
@@ -221,7 +221,23 @@ def main():
                 assert len(arg_i) == n_studies
 
     if args.tasks == "summarize":
-        raise NotImplementedError("summarize is not implemented yet.")
+        all_res = []
+        for fn in os.listdir(args.summarize_target_dir):
+            if not (fn.endswith(".csv") and fn.startswith("summary_")):
+                continue
+            prev_i = float(re.search(r"prev([0-9.]*?)_", fn).group(1))
+            or_i = float(re.search(r"OR([0-9.]*?)_", fn).group(1))
+            summ_df = pd.read_csv(osp.join(args.summarize_target_dir, fn), index_col=0)
+            summ_df["prev"] = prev_i
+            summ_df["OR"] = or_i
+            all_res.append(summ_df)
+        all_res = pd.concat(all_res, axis=0).reset_index(names="param")
+        all_res.set_index(["param", "prev", "OR"], inplace=True)
+        all_res.sort_index(inplace=True)
+        print(all_res.to_string())
+        if args.summarize_save_fn is not None:
+            with pd.ExcelWriter(args.summarize_save_fn, mode="w") as writer:
+                all_res.to_excel(writer)
         # 依靠pattern来找到要print的结果，而非通过指定的参数
         # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
         # fns = [
