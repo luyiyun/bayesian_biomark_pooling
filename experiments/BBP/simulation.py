@@ -105,6 +105,7 @@ def main():
     )
     parser.add_argument("--summarize_target_dir", type=str, default="./results/")
     parser.add_argument("--summarize_save_fn", type=str, default=None)
+    parser.add_argument("--summarize_save_sheet", type=str, default="sheet1")
 
     parser.add_argument("--nrepeat", type=int, default=10)
     parser.add_argument("--ncores", type=int, default=1)
@@ -236,8 +237,11 @@ def main():
         all_res.sort_index(inplace=True)
         print(all_res.to_string())
         if args.summarize_save_fn is not None:
-            with pd.ExcelWriter(args.summarize_save_fn, mode="w") as writer:
-                all_res.to_excel(writer)
+            with pd.ExcelWriter(
+                args.summarize_save_fn,
+                mode="a" if osp.exists(args.summarize_save_fn) else "w",
+            ) as writer:
+                all_res.to_excel(writer, sheet_name=args.summarize_save_sheet)
         # 依靠pattern来找到要print的结果，而非通过指定的参数
         # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
         # fns = [

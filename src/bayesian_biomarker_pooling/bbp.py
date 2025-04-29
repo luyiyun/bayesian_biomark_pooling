@@ -114,6 +114,40 @@ def set_sigma_prior(
 
 @dataclass
 class BBP:
+    """
+    Bayesian Biomarker Pooling (BBP) class.
+
+    This class represents a Bayesian biomarker pooling model, which combines multiple biomarkers to predict a binary outcome.
+    It provides methods for setting hyperpriors, simulating data, and running the analysis pipeline.
+
+    Parameters:
+        prior_betax_args (Tuple[float, float]): Prior distribution arguments for beta_x.
+        prior_x_dist (HYPER_PRIOR_DIST): Prior distribution type for x.
+        prior_x_args (HYPER_PRIOR_ARGS | None): Prior distribution arguments for x.
+        prior_sigma_dist (SIGMA_PRIOR_DIST): Prior distribution type for sigma.
+        prior_sigma_args (SIGMA_PRIOR_ARGS): Prior distribution arguments for sigma.
+        prior_a_dist (HYPER_PRIOR_DIST): Prior distribution type for a.
+        prior_a_args (HYPER_PRIOR_ARGS): Prior distribution arguments for a.
+        prior_b_dist (HYPER_PRIOR_DIST): Prior distribution type for b.
+        prior_b_args (HYPER_PRIOR_ARGS): Prior distribution arguments for b.
+        prior_beta0_dist (HYPER_PRIOR_DIST): Prior distribution type for beta0.
+        prior_beta0_args (HYPER_PRIOR_ARGS): Prior distribution arguments for beta0.
+        prior_betaz_args (Tuple[float, float]): Prior distribution arguments for beta_z.
+        solver (Literal["pymc", "vi", "blackjax"]): Solver to use for Bayesian inference.
+        nsample (int): Number of samples to draw from the posterior distribution.
+        ntunes (int): Number of tuning samples to use for Bayesian inference.
+        nchains (int): Number of chains to use for Bayesian inference.
+        pbar (bool): Whether to display a progress bar during Bayesian inference.
+
+    Attributes:
+        _simulator: Simulator object used for simulating data.
+        _analysis_kwargs: Keyword arguments for the analysis pipeline.
+        _simul_name: Name of the simulator.
+        _trial_name: Name of the trial.
+        _name: Name of the BBP object.
+        _pytensor_cache: Path to the PyTensor cache directory.
+    """
+
     prior_betax_args: Tuple[float, float] = (0.0, 10.0)
     prior_x_dist: HYPER_PRIOR_DIST = "normal-normal-halfcauchy"
     prior_x_args: HYPER_PRIOR_ARGS | None = (0, 10.0, 1.0)
@@ -134,6 +168,22 @@ class BBP:
     seed: int = 0
 
     def __post_init__(self):
+        """
+        Validates and configures the hyperparameters for the BBP class.
+
+        This method ensures that the specified solver and prior distributions are valid and
+        correctly configured. It checks for the presence of the blackjax library if the solver
+        is set to "blackjax". It also validates that the prior distribution types and their
+        corresponding arguments are consistent with the expected configurations.
+
+        Raises:
+            ImportError: If the solver is set to "blackjax" and the blackjax library is not installed.
+            AssertionError: If any prior distribution type or its arguments do not match the expected
+                            configuration for the distributions "normal", "normal-normal-halfcauchy",
+                            "normal-normal-invgamma", "halfcauchy", "invgamma", or
+                            "invgamma-gamma-gamma".
+        """
+
         if self.solver == "blackjax":
             try:
                 import blackjax

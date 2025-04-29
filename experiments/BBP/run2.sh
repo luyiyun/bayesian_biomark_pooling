@@ -8,27 +8,35 @@ nSamples="100 100 100 100"
 nKnowX="10 10 10 10"
 
 # Run the simulation for different prevalence and odds ratio values with additional covariates
-# save_root="results/add_covariates"
+for n_cov in 1 2 3 4 5; do
+    echo "Running with $n_cov covariates"
+    save_root="results/add_covariates${n_cov}"
+
+    betaz=""
+    for ((i=0; i<${n_cov}; i++)); do
+        betaz+="1 "
+    done
+
+    for prev_i in "${prevalence[@]}"; do
+        for OR_i in "${OR[@]}"; do
+            python ./simulation.py --prevalence $prev_i --OR $OR_i --nrepeat $nrepeat --ncores $ncores \
+                --nSamples $nSamples --n_knowX_balance --nKnowX $nKnowX \
+                --solver blackjax --save_root $save_root \
+                --betaz $betaz
+        done
+    done
+done
+
+# Half Cauchy prior for sigma
+# save_root="results/half_cauchy_prior"
 # for prev_i in "${prevalence[@]}"; do
 #     for OR_i in "${OR[@]}"; do
 #         python ./simulation.py --prevalence $prev_i --OR $OR_i --nrepeat $nrepeat --ncores $ncores \
 #             --nSamples $nSamples --n_knowX_balance --nKnowX $nKnowX \
 #             --solver blackjax --save_root $save_root \
-#             --betaz 2 3
+#             --prior_sigma_dist halfcauchy --prior_sigma_args 1.0
 #     done
 # done
-
-
-# Half Cauchy prior for sigma
-save_root="results/half_cauchy_prior"
-for prev_i in "${prevalence[@]}"; do
-    for OR_i in "${OR[@]}"; do
-        python ./simulation.py --prevalence $prev_i --OR $OR_i --nrepeat $nrepeat --ncores $ncores \
-            --nSamples $nSamples --n_knowX_balance --nKnowX $nKnowX \
-            --solver blackjax --save_root $save_root \
-            --prior_sigma_dist halfcauchy --prior_sigma_args 1.0
-    done
-done
 
 
 # imbalanced samples
