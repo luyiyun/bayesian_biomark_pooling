@@ -8,6 +8,7 @@ from argparse import ArgumentParser, Namespace
 from typing import List, Tuple
 from datetime import datetime
 from dataclasses import asdict
+from time import perf_counter
 
 import h5py
 import numpy as np
@@ -17,16 +18,15 @@ from tqdm import tqdm
 from bayesian_biomarker_pooling import BBP
 from bayesian_biomarker_pooling.simulate import Simulator
 
-# suppress the pymc messages
-logger_pymc = logging.getLogger("pymc")
-logger_pymc.setLevel(logging.ERROR)
-# disable the divergences warning message
-logger_sample = logging.getLogger("pymc.sampling")
-logger_sample.setLevel(logging.ERROR)
-logger_sample.propagate = False
 
-logger_simu = logging.getLogger("main.simulate")
-logger_simu.setLevel(logging.ERROR)
+# suppress the pymc messages
+for name in [
+    "pymc",
+    "main.simulate",
+]:
+    logger_i = logging.getLogger(name)
+    logger_i.setLevel(logging.ERROR)
+    logger_i.propagate = False
 
 logger_main = logging.getLogger("main")
 logger_main.setLevel(logging.INFO)
@@ -50,13 +50,21 @@ def evaluate(
         resi["bias"] = bias.mean()
         resi["bias_std"] = bias.std()
         resi["percent_bias"] = resi["bias"] / v
-        resi["percent_bias_std"] = resi["bias"] / v
+        resi["percent_bias_std"] = resi["bias_std"] / v
         resi["mse"] = (bias**2).mean()
         resi["cov_rate"] = (
             (estimate_params.loc[(slice(None), k), interval_columns[0]] <= v)
             & (estimate_params.loc[(slice(None), k), interval_columns[1]] >= v)
         ).mean()
         res[k] = resi
+
+        if "time" in estimate_params.index.levels[1]:
+            resi["time"] = estimate_params.loc[
+                (slice(None), "time"), "mean"
+            ].values.mean()
+            resi["time_std"] = estimate_params.loc[
+                (slice(None), "time"), "mean"
+            ].values.std()
 
     return pd.DataFrame.from_records(res).T
 
@@ -82,12 +90,23 @@ def run_bbp(
         prior_beta0_dist=args.prior_beta0_dist,
         prior_beta0_args=args.prior_beta0_args,
         prior_betaz_args=args.prior_betaz_args,
+        prior_x_dist="normal-normal-halfcauchy"
+        if args.prior_x == "default"
+        else "normal",
+        prior_x_args={
+            "default": (0, 10.0, 1.0),
+            "non-informative": (0, 10.0),
+            "informative": None,
+        }[args.prior_x],
         solver=args.solver,
     )
-    model.fit(dfi, Z_col=z_cols, nuts={"target_accept": 0.9})
+    t1 = perf_counter()
+    model.fit(dfi, Z_col=z_cols, nuts={"target_accept": 0.99})
+    t2 = perf_counter()
     resi = model.summary(
         var_names=["betax", "betaz"] if z_cols is not None else ["betax"]
     )
+    resi = pd.concat([resi, pd.DataFrame({"mean": t2 - t1}, index=["time"])], axis=0)
     return resi
 
 
@@ -148,7 +167,7 @@ def main():
     )
 
     # bayesian inference settings
-    parser.add_argument("--prior_betax_args", type=float, nargs=2, default=(0.0, 10.0))
+    parser.add_argument("--prior_betax_args", type=float, nargs=2, default=(0.0, 1.0))
     parser.add_argument(
         "--prior_sigma_dist",
         type=str,
@@ -198,6 +217,12 @@ def main():
         nargs=2,
         default=[0.0, 10.0],
     )
+    parser.add_argument(
+        "--prior_x",
+        type=str,
+        choices=["non-informative", "informative", "default"],
+        default="default",
+    )
     parser.add_argument("--ndraws", type=int, default=1000)
     parser.add_argument("--ntunes", type=int, default=1000)
     parser.add_argument(
@@ -242,44 +267,6 @@ def main():
                 mode="a" if osp.exists(args.summarize_save_fn) else "w",
             ) as writer:
                 all_res.to_excel(writer, sheet_name=args.summarize_save_sheet)
-        # 依靠pattern来找到要print的结果，而非通过指定的参数
-        # 因为我们的参数是一直在递增的，所以通过指定的参数可能无法实现目的
-        # fns = [
-        #     fn
-        #     for fn in os.listdir(save_root)
-        #     if fn.startswith("pipeline_") and fn.endswith(".h5")
-        # ]
-        # if args.summarize_target_pattern is not None:
-        #     pattern = re.compile(re.escape(args.summarize_target_pattern))
-        #     fns = [fn for fn in fns if pattern.search(fn)]
-        # all_summ_dfs = []
-        # for fn in fns:
-        #     # 提取其OR值和prevalence值
-        #     fn_prev = float(
-        #         re.search(r"prev([0-9_]*?)-", fn).group(1).replace("_", ".")
-        #     )
-        #     fn_or = float(re.search(r"OR([0-9_]*?)-", fn).group(1).replace("_", "."))
-        #     res_fn = osp.join(save_root, fn)
-        #     with h5py.File(res_fn, "r") as h5:
-        #         g_eva = h5["evaluate"]
-        #         summ_df = summarise_results(
-        #             g_eva["values"][:],
-        #             g_eva.attrs["index"],
-        #             g_eva.attrs["columns"],
-        #         )
-        #     # summ_df = summ_df.loc[[args.summarize_parameter], :]
-        #     summ_df["prev"] = fn_prev
-        #     summ_df["OR"] = fn_or
-        #     all_summ_dfs.append(summ_df)
-        # all_summ_dfs = pd.concat(all_summ_dfs)
-        # all_summ_dfs.reset_index(inplace=True, names="parameter")
-        # all_summ_dfs.set_index(["parameter", "prev", "OR"], inplace=True)
-        # all_summ_dfs.sort_index(inplace=True)
-        # print(all_summ_dfs.to_string())
-        # if args.summarize_save_fn is not None:
-        #     summ_save_ffn = osp.join(save_root, args.summarize_save_fn)
-        #     with pd.ExcelWriter(summ_save_ffn, mode="w") as writer:
-        #         all_summ_dfs.to_excel(writer)
         return
 
     # 模拟数据

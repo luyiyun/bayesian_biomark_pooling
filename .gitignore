@@ -8,3 +8,4 @@ experiments/results/
 *.npy
 *.png
 *.jpg
+!example_data.csv
