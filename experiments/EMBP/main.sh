@@ -15,7 +15,7 @@ for n in ${num_samples[@]}; do
             ana_dir=./results/continue_wo_z_${n}_${rx}_${bx}
             eval_fn=$ana_dir/eval_results.csv
             python main.py simulate -ot continue -od $data_dir --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat
-            python main.py analyze -dd $data_dir -od $ana_dir -nc $ncore
+            python main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
             python main.py evaluate -ad $ana_dir -of $eval_fn
         done
     done

@@ -140,6 +140,15 @@ def main():
         help=("true beta_x, default is 0.0"),
     )
     simu_parser.add_argument(
+        "--OR",
+        default=None,
+        type=float,
+        help=(
+            "true OR, default is None, only used when outcome_type is binary. "
+            "When it's None, will use beta_x instead."
+        ),
+    )
+    simu_parser.add_argument(
         "-b0",
         "--beta_0",
         default=(-0.5, -0.25, 0.25, 0.5),
@@ -223,6 +232,13 @@ def main():
     # ============= 子命令：分析模拟数据 =============
     # region
     ana_parser = subparsers.add_parser("analyze", help="analyze simulated data")
+    ana_parser.add_argument(
+        "-ot",
+        "--outcome_type",
+        default="continue",
+        choices=["continue", "binary"],
+        help="indicates the type of outcome, default is continue",
+    )
     ana_parser.add_argument(
         "-dd",
         "--data_dir",
@@ -360,38 +376,45 @@ def main():
             )
 
         def proc_args(x):
-            return x[0] if isinstance(x, list) and len(x) == 1 else x
+            if x is None:
+                return x
+            if isinstance(x, (list, tuple)) and len(x) == 1:
+                return [x[0]] * args.n_studies
+            assert len(x) == args.n_studies, (
+                f"length of {x} must be equal to n_studies {args.n_studies}"
+            )
+            return x
+
+        ratio_observed_x = proc_args(args.ratio_observed_x)
+        n_sample_per_study = proc_args(args.n_samples)
+        n_knowX_per_study = [
+            int(r * n) for r, n in zip(ratio_observed_x, n_sample_per_study)
+        ]
 
         if args.outcome_type == "binary":
-            # TODO:
             simulator = BinarySimulator(
-                n_studies=args.n_studies,
-                n_samples=proc_args(args.n_samples),
-                ratio_observed_X=proc_args(args.ratio_observed_x),
-                beta_x=args.beta_x,
-                beta_0=proc_args(args.beta_0),
+                beta0=proc_args(args.beta_0),
                 a=proc_args(args.a),
                 b=proc_args(args.b),
                 sigma2_e=proc_args(args.sigma2_e),
-                sigma2_y=proc_args(args.sigma2_y),
+                n_sample_per_studies=n_sample_per_study,
+                n_knowX_per_studies=n_knowX_per_study,
+                betaz=args.beta_z,
+                OR=args.OR or np.exp(args.beta_x),
                 prevalence=proc_args(args.prevalence),
-                n_z=0 if args.beta_z is None else len(args.beta_z),
-                beta_z=args.beta_z,
+                n_knowX_balance=True,
             )
         else:
             simulator = ContinuousSimulator(
-                n_studies=args.n_studies,
-                n_samples=proc_args(args.n_samples),
-                ratio_observed_X=proc_args(args.ratio_observed_x),
-                beta_x=args.beta_x,
-                beta_0=proc_args(args.beta_0),
+                beta0=proc_args(args.beta_0),
                 a=proc_args(args.a),
                 b=proc_args(args.b),
                 sigma2_e=proc_args(args.sigma2_e),
+                n_sample_per_studies=n_sample_per_study,
+                n_knowX_per_studies=n_knowX_per_study,
+                betaz=args.beta_z,
+                betax=args.beta_x,
                 sigma2_y=proc_args(args.sigma2_y),
-                prevalence=proc_args(args.prevalence),
-                n_z=0 if args.beta_z is None else len(args.beta_z),
-                beta_z=args.beta_z,
             )
 
         df_all = []
@@ -418,8 +441,8 @@ def main():
         fn = osp.join(args.data_dir, "data.csv")
         df = pd.read_csv(fn, index_col=None)
 
-        with open(osp.join(args.data_dir, "params.json"), "r") as f:
-            simu_args = json.load(f)
+        # with open(osp.join(args.data_dir, "params.json"), "r") as f:
+        #     simu_args = json.load(f)
 
         if "repeat" not in df.columns:
             df_iter = [(0, df)]
@@ -459,7 +482,7 @@ def main():
                     Z,
                     args.gpu,
                     args.ncores,
-                    simu_args["outcome_type"],
+                    args.outcome_type,
                     args.methods,
                     embp_kwargs,
                 )
@@ -472,6 +495,7 @@ def main():
 
         elif args.gpu:
             pass
+            raise NotImplementedError("GPU multi-processing is not implemented yet.")
             # n_cudas = torch.cuda.device_count()
             # if n_cudas != args.ncores:
             #     print(
@@ -525,7 +549,7 @@ def main():
                             Z,
                             args.gpu,
                             args.ncores,
-                            simu_args["outcome_type"],
+                            args.outcome_type,
                             args.methods,
                             embp_kwargs,
                         ),
@@ -578,7 +602,7 @@ def main():
             ana_args = json.load(f)
         with open(osp.join(ana_args["data_dir"], "params.json"), "r") as f:
             simu_args = json.load(f)
-        true_beta_x = simu_args["beta_x"]
+        true_beta_x = simu_args["betax"]
 
         res = xr.load_dataset(osp.join(args.analyzed_dir, "analyzed_results.nc"))
         index, res_df = [], defaultdict(list)

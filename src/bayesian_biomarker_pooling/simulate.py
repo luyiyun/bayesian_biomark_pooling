@@ -47,6 +47,7 @@ class Simulator:
 
     mu_x: float = 0
     sigma2_x: float = 1
+    betax: float = 1.0
     beta0: Union[float, Sequence[float]] = 1.0
     a: Sequence[float] = (-3, 1, -1, 3)
     b: Sequence[float] = (0.5, 0.75, 1.25, 1.5)
@@ -58,6 +59,16 @@ class Simulator:
     sigma2_z: float = 1
     betaz: Sequence[float] | None = None
 
+    def param_names_by_studies(self) -> list[str]:
+        return [
+            "beta0",
+            "a",
+            "b",
+            "sigma2_e",
+            "n_sample_per_studies",
+            "n_knowX_per_studies",
+        ]
+
     def __post_init__(self):
         # logger = logging.getLogger("main.simulate")
 
@@ -66,16 +77,17 @@ class Simulator:
         # 通过某些参数的数量，来确定studies的数量
         # 同时需要保证这些参数的数量是一致的
         #  (要么是1, 表示在所有studies中一样, 要么是相同的长度)
-        params_may_multiple = [
-            self.beta0,
-            self.a,
-            self.b,
-            self.sigma2_e,
-            self.n_sample_per_studies,
-            self.n_knowX_per_studies,
-        ]
+        # params_may_multiple = [
+        #     self.beta0,
+        #     self.a,
+        #     self.b,
+        #     self.sigma2_e,
+        #     self.n_sample_per_studies,
+        #     self.n_knowX_per_studies,
+        # ]
         ns = None
-        for parami in params_may_multiple:
+        for param_name in self.param_names_by_studies():
+            parami = getattr(self, param_name)
             if isinstance(parami, (int, float)):
                 continue
             len_parami = len(parami)
@@ -88,17 +100,15 @@ class Simulator:
         assert ns is not None, (
             "the number of studies can not be identified by simulation settings."
         )
-        (
-            self.beta0,
-            self.a,
-            self.b,
-            self.sigma2_e,
-            self.n_sample_per_studies,
-            self.n_knowX_per_studies,
-        ) = [
-            np.array([x] * ns) if isinstance(x, (float, int)) else np.array(x)
-            for x in params_may_multiple
-        ]
+        for param_name in self.param_names_by_studies():
+            parami = getattr(self, param_name)
+            setattr(
+                self,
+                param_name,
+                np.array([parami] * ns)
+                if isinstance(parami, (float, int))
+                else np.array(parami),
+            )
 
         if self.direction == "w->x":
             self.mu_w = (self.mu_x - self.a) / self.b
@@ -149,7 +159,7 @@ class Simulator:
             Z = None
 
         beta0 = np.repeat(self.beta0, self.n_sample_per_studies)
-        Y_ = self.beta1 * X + beta0
+        Y_ = self.betax * X + beta0
 
         if self.betaz is not None:
             Y_ += np.dot(Z, self.betaz)
@@ -179,6 +189,11 @@ class Simulator:
                 res[f"Z{i + 1}"] = Z[:, i]
         return res
 
+    def save(self, path: str):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(asdict(self), f, sort_keys=True, default=default_serializer)
+
 
 @dataclass
 class BinarySimulator(Simulator):
@@ -187,10 +202,11 @@ class BinarySimulator(Simulator):
     OR: float = 1.25
     prevalence: Optional[float] = None
     n_knowX_balance: bool = False
+    betax: float | None = None
 
     def __post_init__(self):
         # 使用OR值来确定beta1
-        self.beta1 = np.log(self.OR)
+        self.betax = np.log(self.OR) if self.OR is not None else self.betax
         # 如果指定了prevalence，则使用prevalence来计算beta0，beta0在所有
         # studies中都是一样的
         if self.prevalence is not None:
@@ -242,11 +258,15 @@ class BinarySimulator(Simulator):
 class ContinuousSimulator(Simulator):
     """the simulator for continuous outcome"""
 
-    beta1: float = 1.0
-    sigma2_y: float = 1.0
+    sigma2_y: float | list[float] = 1.0
+
+    def param_names_by_studies(self):
+        res = super().param_names_by_studies()
+        res.append("sigma2_y")
+        return res
 
     def generate_Y(self, rng, X, W, Y_, Z):
-        sigma_y = np.repeat(self.sigma2_y**0.5, Y_.shape[0])
+        sigma_y = np.repeat(self.sigma2_y**0.5, self.n_sample_per_studies)
         y = rng.normal(Y_, sigma_y)
         return y
 
