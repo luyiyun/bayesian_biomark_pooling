@@ -1,36 +1,20 @@
-# import logging
 import os
 import os.path as osp
 import multiprocessing as mp
 import re
 import json
-
-# from datetime import datetime
 from typing import Literal, Sequence
 from argparse import ArgumentParser
-
-# from itertools import product
-# from copy import deepcopy
-# from time import perf_counter
 from collections import defaultdict
-
-# os.environ["OMP_NUM_THREADS"] = "1"
-# os.environ["MKL_NUM_THREADS"] = "1"
-# os.environ["OPENBLAS_NUM_THREADS"] = "1"
-# os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
-# os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-# import matplotlib.pyplot as plt
 from tqdm import tqdm
 import statsmodels.api as sm
 import torch
 
-# import torch.multiprocessing as mp_torch
-from bayesian_biomarker_pooling.simulate import Simulator
+from bayesian_biomarker_pooling.simulate import BinarySimulator, ContinuousSimulator
 from bayesian_biomarker_pooling import EMBP
 
 
@@ -53,9 +37,7 @@ def method_xonly(
     return np.r_[res.params[1], res.conf_int()[1, :]]
 
 
-def method_naive(
-    W, Y, Z, type_outcome: Literal["binary", "continue"]
-) -> np.ndarray:
+def method_naive(W, Y, Z, type_outcome: Literal["binary", "continue"]) -> np.ndarray:
     if Z is not None:
         W = np.concatenate([W[:, None], Z], axis=1)
     W = sm.add_constant(W)
@@ -107,9 +89,7 @@ def main():
 
     # ============= 子命令：生成模拟数据 =============
     # region
-    simu_parser = subparsers.add_parser(
-        "simulate", help="generate simulated data"
-    )
+    simu_parser = subparsers.add_parser("simulate", help="generate simulated data")
     simu_parser.add_argument(
         "-od",
         "--output_dir",
@@ -178,8 +158,7 @@ def main():
         type=float,
         nargs="+",
         help=(
-            "true a, default is (-3, 1, -1, 3), "
-            "can be a list whose length is n_studies"
+            "true a, default is (-3, 1, -1, 3), can be a list whose length is n_studies"
         ),
     )
     simu_parser.add_argument(
@@ -199,10 +178,7 @@ def main():
         default=(0.5, 0.75, 1.0, 1.25),
         type=float,
         nargs="+",
-        help=(
-            "true sigma2_e, default is 1.0, "
-            "can be a list whose length is n_studies"
-        ),
+        help=("true sigma2_e, default is 1.0, can be a list whose length is n_studies"),
     )
     simu_parser.add_argument(
         "-sy",
@@ -210,10 +186,7 @@ def main():
         default=(0.5, 0.75, 1.0, 1.25),
         type=float,
         nargs="+",
-        help=(
-            "true sigma2_y, default is 1.0, "
-            "can be a list whose length is n_studies"
-        ),
+        help=("true sigma2_y, default is 1.0, can be a list whose length is n_studies"),
     )
     simu_parser.add_argument(
         "-bz",
@@ -249,23 +222,18 @@ def main():
 
     # ============= 子命令：分析模拟数据 =============
     # region
-    ana_parser = subparsers.add_parser(
-        "analyze", help="analyze simulated data"
-    )
+    ana_parser = subparsers.add_parser("analyze", help="analyze simulated data")
     ana_parser.add_argument(
         "-dd",
         "--data_dir",
         default="./results/simulated_data",
-        help=(
-            "path to simulated data, default is " "./results/simulated_data"
-        ),
+        help=("path to simulated data, default is ./results/simulated_data"),
     )
     ana_parser.add_argument(
         "-od",
         "--output_dir",
         default="./results/analyzed_results",
-        help="path to save analyzed results, "
-        "default is ./results/analyzed_results",
+        help="path to save analyzed results, default is ./results/analyzed_results",
     )
     ana_parser.add_argument(
         "-m",
@@ -332,8 +300,7 @@ def main():
         "--importance_sampling_maxK",
         default=5000,
         type=int,
-        help="maximum number of samples for importance sampling, "
-        "default is 5000",
+        help="maximum number of samples for importance sampling, default is 5000",
     )
     ana_parser.add_argument(
         "-g",
@@ -372,15 +339,13 @@ def main():
         "-ad",
         "--analyzed_dir",
         default="./results/analyzed_results",
-        help="path to save evaluated results, "
-        "default is ./results/evaluated_results",
+        help="path to save evaluated results, default is ./results/evaluated_results",
     )
     eval_parser.add_argument(
         "-of",
         "--output_file",
         default="evaluated_results.csv",
-        help="path to save evaluated results, "
-        "default is evaluated_results.csv",
+        help="path to save evaluated results, default is evaluated_results.csv",
     )
     # endregion
 
@@ -397,21 +362,37 @@ def main():
         def proc_args(x):
             return x[0] if isinstance(x, list) and len(x) == 1 else x
 
-        simulator = Simulator(
-            n_studies=args.n_studies,
-            n_samples=proc_args(args.n_samples),
-            ratio_observed_X=proc_args(args.ratio_observed_x),
-            outcome_type=args.outcome_type,
-            beta_x=args.beta_x,
-            beta_0=proc_args(args.beta_0),
-            a=proc_args(args.a),
-            b=proc_args(args.b),
-            sigma2_e=proc_args(args.sigma2_e),
-            sigma2_y=proc_args(args.sigma2_y),
-            prevalence=proc_args(args.prevalence),
-            n_z=0 if args.beta_z is None else len(args.beta_z),
-            beta_z=args.beta_z,
-        )
+        if args.outcome_type == "binary":
+            # TODO:
+            simulator = BinarySimulator(
+                n_studies=args.n_studies,
+                n_samples=proc_args(args.n_samples),
+                ratio_observed_X=proc_args(args.ratio_observed_x),
+                beta_x=args.beta_x,
+                beta_0=proc_args(args.beta_0),
+                a=proc_args(args.a),
+                b=proc_args(args.b),
+                sigma2_e=proc_args(args.sigma2_e),
+                sigma2_y=proc_args(args.sigma2_y),
+                prevalence=proc_args(args.prevalence),
+                n_z=0 if args.beta_z is None else len(args.beta_z),
+                beta_z=args.beta_z,
+            )
+        else:
+            simulator = ContinuousSimulator(
+                n_studies=args.n_studies,
+                n_samples=proc_args(args.n_samples),
+                ratio_observed_X=proc_args(args.ratio_observed_x),
+                beta_x=args.beta_x,
+                beta_0=proc_args(args.beta_0),
+                a=proc_args(args.a),
+                b=proc_args(args.b),
+                sigma2_e=proc_args(args.sigma2_e),
+                sigma2_y=proc_args(args.sigma2_y),
+                prevalence=proc_args(args.prevalence),
+                n_z=0 if args.beta_z is None else len(args.beta_z),
+                beta_z=args.beta_z,
+            )
 
         df_all = []
         for i in tqdm(range(args.n_repeats), desc="Simulate: "):
@@ -463,9 +444,7 @@ def main():
 
         if args.ncores <= 1:
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
-                zind = dfi.columns.map(
-                    lambda x: re.search(r"Z\d*", x) is not None
-                )
+                zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
                 W = dfi["W"].values
@@ -530,9 +509,7 @@ def main():
             with mp.Pool(args.ncores) as pool:
                 tmp_reses = []
                 for i, dfi in df_iter:
-                    zind = dfi.columns.map(
-                        lambda x: re.search(r"Z\d*", x) is not None
-                    )
+                    zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                     X = dfi["X"].values
                     Y = dfi["Y"].values
                     W = dfi["W"].values
@@ -603,26 +580,17 @@ def main():
             simu_args = json.load(f)
         true_beta_x = simu_args["beta_x"]
 
-        res = xr.load_dataset(
-            osp.join(args.analyzed_dir, "analyzed_results.nc")
-        )
+        res = xr.load_dataset(osp.join(args.analyzed_dir, "analyzed_results.nc"))
         index, res_df = [], defaultdict(list)
         for k, da in res.items():
             index.append(k)
-            diff = (
-                da.sel(params="beta_x", statistic="estimate").values
-                - true_beta_x
-            )
+            diff = da.sel(params="beta_x", statistic="estimate").values - true_beta_x
             res_df["bias"].append(diff.mean())
             res_df["mse"].append((diff**2).mean())
             if not ana_args["no_ci"]:
                 in_ci = (
-                    da.sel(params="beta_x", statistic="CI_1").values
-                    <= true_beta_x
-                ) & (
-                    da.sel(params="beta_x", statistic="CI_2").values
-                    >= true_beta_x
-                )
+                    da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
+                ) & (da.sel(params="beta_x", statistic="CI_2").values >= true_beta_x)
                 res_df["cov_rate"].append(in_ci.mean())
 
         res_df = pd.DataFrame(res_df, index=index)

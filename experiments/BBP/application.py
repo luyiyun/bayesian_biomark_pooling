@@ -26,15 +26,31 @@ def main():
     os.makedirs(save_root, exist_ok=True)
 
     # read data
-    dat = pd.read_csv(osp.join(save_root, "BRCA1_simu.csv"), index_col=0)
+    dat = pd.read_csv(osp.join(save_root, "ERBB2_simu.csv"), index_col=0)
 
     # fit model
-    model = BBP()
+    model = BBP(
+        ntunes=5000,
+        nsample=5000,
+        prior_x_dist="normal-normal-invgamma",
+        prior_x_args=(0, 10, 2, 1),
+        prior_a_dist="normal-normal-invgamma",
+        prior_a_args=(0, 10, 2, 1),
+        prior_b_dist="normal-normal-invgamma",
+        prior_b_args=(0, 10, 2, 1),
+        prior_beta0_dist="normal-normal-invgamma",
+        prior_beta0_args=(0, 10, 2, 1),
+        prior_sigma_dist="invgamma",
+        prior_sigma_args=(2, 1),
+        nchains=1,
+    )
 
     model.fit(dat)
     baye_res = model.summary()
     print(baye_res)
-    baye_res.to_csv(osp.join(save_root, "BRCA1_res.csv"))
+    baye_res.to_csv(osp.join(save_root, "ERBB2_res.csv"))
+
+    model.plot("./results/ERBB2_plot")
 
 
 if __name__ == "__main__":

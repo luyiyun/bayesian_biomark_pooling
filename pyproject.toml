@@ -34,6 +34,7 @@ develop = [
     "statsmodels>=0.14.1",
     "build",
     "pytest",
+    "blackjax"
 ]
 test = ["pytest"]
 
