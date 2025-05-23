@@ -25,6 +25,9 @@ Issues = "https://github.com/luyiyun/bayesian_biomark_pooling/issues"
 torch = [
     "torch>=2.2.0",
 ]
+# NOTE: 这要求使用uv的时候需要uv sync --extra develop
+# 因为uv add xxx --dev是放在dependency-groups.dev这个里面进行管理的
+# 下面的develop是来自于早前pip管理的遗留方式
 develop = [
     "torch>=2.2.0",
     "ipdb>=0.13.13",

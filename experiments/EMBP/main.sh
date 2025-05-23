@@ -2,24 +2,35 @@ set -e # 一旦出现错误，立即停止运行，并打印出错误信息。
 
 nrepeat=1000
 ncore=1
+# runtool="uv run"
+runtool="python"
+
+# ================ test ================
+data_dir=./example/data
+ana_dir=./example/results
+eval_fn=./example/eval_results.csv
+outcome_type=continue
+$runtool main.py simulate -ot $outcome_type -od $data_dir --n_samples 100 --ratio_observed_x 0.1 --beta_x 1 -nr 100
+$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc 10
+$runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # ================ continue outcome, without Z ================
-num_samples=(100 150 200 250)
-ratio_observed_x=(0.1 0.15 0.2)
-beta_x=(0.0 1.0 2.0)
-for n in ${num_samples[@]}; do
-    for rx in ${ratio_observed_x[@]}; do
-        for bx in ${beta_x[@]}; do
-            echo "<==========> n=$n, rx=$rx, bx=$bx"
-            data_dir=./data/continue_wo_z_${n}_${rx}_${bx}
-            ana_dir=./results/continue_wo_z_${n}_${rx}_${bx}
-            eval_fn=$ana_dir/eval_results.csv
-            python main.py simulate -ot continue -od $data_dir --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat
-            python main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
-            python main.py evaluate -ad $ana_dir -of $eval_fn
-        done
-    done
-done
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.1 0.15 0.2)
+# beta_x=(0.0 1.0 2.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             echo "<==========> n=$n, rx=$rx, bx=$bx"
+#             data_dir=./data/continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./results/continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=$ana_dir/eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
 
 # ================ continue outcome, with Z ================
 # xxx
