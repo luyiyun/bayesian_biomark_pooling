@@ -12,3 +12,4 @@ results/
 *.png
 *.jpg
 !example_data.csv
+experiments/EMBP/example

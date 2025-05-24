@@ -3,9 +3,11 @@ import os.path as osp
 import multiprocessing as mp
 import re
 import json
+import glob
 from typing import Literal, Sequence
 from argparse import ArgumentParser
 from collections import defaultdict
+from dataclasses import asdict
 
 import numpy as np
 import pandas as pd
@@ -14,7 +16,11 @@ from tqdm import tqdm
 import statsmodels.api as sm
 import torch
 
-from bayesian_biomarker_pooling.simulate import BinarySimulator, ContinuousSimulator
+from bayesian_biomarker_pooling.simulate import (
+    BinarySimulator,
+    ContinuousSimulator,
+    default_serializer,
+)
 from bayesian_biomarker_pooling import EMBP
 from bayesian_biomarker_pooling.utils import Timer
 
@@ -378,6 +384,32 @@ def main():
     )
     # endregion
 
+    # ============= 子命令：总结评价指标 =============
+    # region
+    summ_parser = subparsers.add_parser(
+        "summarize", help="summarize the performance of methods"
+    )
+    summ_parser.add_argument(
+        "-efp",
+        "--evaluated_file_pattern",
+        default="./results/evaluated_results/*.csv",
+        help="file pattern to evaluated results, default is ./results/evaluated_results/*.csv",
+    )
+    summ_parser.add_argument(
+        "-of",
+        "--output_file",
+        default="summarized_results.xlsx",
+        help="path to save evaluated results, default is summarized_results.xlsx, must be a xlsx file",
+    )
+    summ_parser.add_argument(
+        "-sp",
+        "--summarize_parameters",
+        type=str,
+        nargs="+",
+        default=("beta_x", "ratio_observed_x"),
+        help="parameters to summarize, default is beta_x, ratio_observed_x",
+    )
+
     args = parser.parse_args()
 
     # ================= 模拟数据，并保存 =================
@@ -439,7 +471,15 @@ def main():
 
         os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
         df_all.to_csv(osp.join(args.output_dir, "data.csv"), index=False)
-        simulator.save(osp.join(args.output_dir, "params.json"))
+        with open(osp.join(args.output_dir, "params.json"), "w") as f:
+            args_dict = asdict(simulator)
+            args_dict.update(args.__dict__)
+            json.dump(
+                args_dict,
+                f,
+                sort_keys=True,
+                default=default_serializer,
+            )
 
         return
 
@@ -568,7 +608,7 @@ def main():
                         ),
                     )
                     tmp_reses.append(tmp_resi)
-                for tmp_resi in tqdm(tmp_reses):
+                for tmp_resi in tqdm(tmp_reses, desc="Analyze: "):
                     resi = tmp_resi.get()
                     for k, v in resi.items():
                         res_all[k].append(v)
@@ -605,10 +645,10 @@ def main():
 
     # ================= 读取实验结果和模拟参数，计算评价指标 =================
     if args.subcommand == "evaluate":
-        if osp.exists(args.output_file):
+        output_file = osp.join(args.analyzed_dir, args.output_file)
+        if osp.exists(output_file):
             raise ValueError(
-                f"Output file {args.output_file} already "
-                "exists, please remove it first."
+                f"Output file {output_file} already exists, please remove it first."
             )
 
         with open(osp.join(args.analyzed_dir, "params.json"), "r") as f:
@@ -636,7 +676,45 @@ def main():
 
         res_df = pd.DataFrame(res_df, index=index)
         print(res_df)
-        res_df.to_csv(args.output_file)
+        res_df.to_csv(output_file)
+
+    # ================= 读取读取多次实验的结果，整合为一个表格 =================
+    if args.subcommand == "summarize":
+        all_res = []
+        for fn in glob.glob(args.evaluated_file_pattern):
+            path = osp.dirname(fn)
+            with open(osp.join(path, "params.json"), "r") as f:
+                ana_args = json.load(f)
+            with open(osp.join(ana_args["data_dir"], "params.json"), "r") as f:
+                simu_args = json.load(f)
+            summ_df = pd.read_csv(fn, index_col=0)
+            for k in args.summarize_parameters:
+                if k not in simu_args:
+                    raise ValueError(f"Parameter {k} not found in simu_args.")
+                v = simu_args[k]
+                if isinstance(v, (list, tuple)):
+                    if len(v) == 1 or all(vi == v[0] for vi in v[1:]):
+                        v = v[0]
+                    else:
+                        v = "-".join(map(str, v))
+                summ_df[k] = v
+            all_res.append(summ_df)
+        all_res = pd.concat(all_res, axis=0)
+        all_res["time"] = [
+            f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_sd"])
+        ]
+        all_res["bias"] = [
+            f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["bias"], all_res["bias_sd"])
+        ]
+        all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)
+        all_res.index.name = "methods"
+        all_res.set_index(args.summarize_parameters, append=True, inplace=True)
+        all_res = all_res.unstack(level=-1).swaplevel(0, -1).swaplevel(0, -1, axis=1)
+        all_res.sort_index(axis=0, inplace=True)
+        all_res.sort_index(axis=1, inplace=True)
+        print(all_res.to_string())
+        with pd.ExcelWriter(args.output_file) as writer:
+            all_res.to_excel(writer)
 
 
 if __name__ == "__main__":
