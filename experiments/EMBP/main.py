@@ -110,6 +110,13 @@ def main():
     # region
     simu_parser = subparsers.add_parser("simulate", help="generate simulated data")
     simu_parser.add_argument(
+        "-s",
+        "--seed",
+        default=0,
+        type=int,
+        help="random seed, default is 0",
+    )
+    simu_parser.add_argument(
         "-od",
         "--output_dir",
         default="./results/simulated_data",
@@ -464,7 +471,7 @@ def main():
 
         df_all = []
         for i in tqdm(range(args.n_repeats), desc="Simulate: "):
-            df = simulator.simulate(seed=i)
+            df = simulator.simulate(seed=i + args.seed)
             df["repeat"] = i
             df_all.append(df)
         df_all = pd.concat(df_all, ignore_index=True)
