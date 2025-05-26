@@ -208,6 +208,13 @@ def main():
         ),
     )
     simu_parser.add_argument(
+        "-sx",
+        "--sigma2_x",
+        default=1.0,
+        type=float,
+        help="true sigma2_x, default is 1.0",
+    )
+    simu_parser.add_argument(
         "-se",
         "--sigma2_e",
         default=(0.5, 0.75, 1.0, 1.25),
@@ -445,6 +452,7 @@ def main():
 
         if args.outcome_type == "binary":
             simulator = BinarySimulator(
+                sigma2_x=args.sigma2_x,
                 beta0=proc_args(args.beta_0),
                 a=proc_args(args.a),
                 b=proc_args(args.b),
@@ -458,6 +466,7 @@ def main():
             )
         else:
             simulator = ContinuousSimulator(
+                sigma2_x=args.sigma2_x,
                 beta0=proc_args(args.beta_0),
                 a=proc_args(args.a),
                 b=proc_args(args.b),
