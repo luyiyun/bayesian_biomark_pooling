@@ -247,10 +247,9 @@ def main():
         "--prevalence",
         default=None,
         type=float,
-        nargs="+",
         help=(
-            "prevalence, default is None, can be a list whose length "
-            "is n_studies. It is only used when outcome_type is binary."
+            "prevalence, default is None, can be a float scalar. "
+            "It is only used when outcome_type is binary."
         ),
     )
     simu_parser.add_argument(
@@ -461,7 +460,7 @@ def main():
                 n_knowX_per_studies=n_knowX_per_study,
                 betaz=args.beta_z,
                 OR=args.OR or np.exp(args.beta_x),
-                prevalence=proc_args(args.prevalence),
+                prevalence=args.prevalence,
                 n_knowX_balance=True,
             )
         else:
