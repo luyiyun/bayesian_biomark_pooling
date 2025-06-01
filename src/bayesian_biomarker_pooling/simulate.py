@@ -46,7 +46,7 @@ class Simulator:
     """the base class for simulating data from a bayesian biomarker pooling model"""
 
     mu_x: float = 0
-    sigma2_x: float = 1
+    sigma2_x: float = 1.0
     betax: float = 1.0
     beta0: Union[float, Sequence[float]] = 1.0
     a: Sequence[float] = (-3, 1, -1, 3)
@@ -212,7 +212,7 @@ class BinarySimulator(Simulator):
         if self.prevalence is not None:
             # compute the suitable beta0 to produce necessary prevalence
             self.beta0 = get_beta0_by_prevalence(
-                self.prevalence, self.beta1, self.mu_x, self.sigma2_x
+                self.prevalence, self.betax, self.mu_x, self.sigma2_x
             )
             logger.info(
                 "(pid:%d)Get the beta0 = %.4f by prevalence %.4f"

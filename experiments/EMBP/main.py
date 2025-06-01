@@ -210,10 +210,18 @@ def main():
     simu_parser.add_argument(
         "-se",
         "--sigma2_e",
-        default=(0.5, 0.75, 1.0, 1.25),
+        default=(1.0, 1.0, 1.0, 1.0),
         type=float,
         nargs="+",
         help=("true sigma2_e, default is 1.0, can be a list whose length is n_studies"),
+    )
+    simu_parser.add_argument(
+        "-sx",
+        "--sigma2_x",
+        default=1.0,
+        type=float,
+        nargs="+",
+        help=("true sigma2_x, default is 1.0, can be a list whose length is n_studies"),
     )
     simu_parser.add_argument(
         "-sy",
@@ -239,7 +247,7 @@ def main():
         "-pr",
         "--prevalence",
         default=None,
-        type=float,
+        # type=float,
         nargs="+",
         help=(
             "prevalence, default is None, can be a list whose length "
@@ -453,7 +461,7 @@ def main():
                 n_knowX_per_studies=n_knowX_per_study,
                 betaz=args.beta_z,
                 OR=args.OR or np.exp(args.beta_x),
-                prevalence=proc_args(args.prevalence),
+                # prevalence=proc_args(args.prevalence),
                 n_knowX_balance=True,
             )
         else:
@@ -671,7 +679,7 @@ def main():
             diff = da.sel(params="beta_x", statistic="estimate").values - true_beta_x
             res_df["bias"].append(diff.mean())
             res_df["mse"].append((diff**2).mean())
-            res_df["bias_sd"].append(diff.std() / diff.shape[0])
+            res_df["bias_se"].append(diff.std() / np.sqrt(diff.shape[0]))
             if not ana_args["no_ci"]:
                 in_ci = (
                     da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
@@ -679,7 +687,7 @@ def main():
                 res_df["cov_rate"].append(in_ci.mean())
             time_arr = da.sel(params="time", statistic="estimate").values
             res_df["time_mean"].append(time_arr.mean())
-            res_df["time_sd"].append(time_arr.std() / time_arr.shape[0])
+            res_df["time_se"].append(time_arr.std() / np.sqrt(time_arr.shape[0]))
 
         res_df = pd.DataFrame(res_df, index=index)
         print(res_df)
@@ -707,13 +715,26 @@ def main():
                 summ_df[k] = v
             all_res.append(summ_df)
         all_res = pd.concat(all_res, axis=0)
+        
+        # all_res["time_sd"] *= np.sqrt(1000)*100
+        all_res["time_se"] *= 100
+        all_res["bias"]    *= 100
+        all_res["mse"]     *= 100
+        all_res["cov_rate"]*= 100
+        # all_res["bias_sd"] *= np.sqrt(1000) *100
+        all_res["bias_se"] *= 100
+
         all_res["time"] = [
-            f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_sd"])
+            # f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_sd"])
+            f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_se"])
         ]
         all_res["bias"] = [
-            f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["bias"], all_res["bias_sd"])
+            # f"{m:.4f}({s:.4f})" for m, s in zip(all_res["bias"], all_res["bias_sd"])
+            f"{m:.4f}({s:.4f})" for m, s in zip(all_res["bias"], all_res["bias_se"])
         ]
-        all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)
+        
+        # all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)
+        all_res.drop(columns=["time_mean", "time_se", "bias_se"], inplace=True)
         all_res.index.name = "methods"
         all_res.set_index(args.summarize_parameters, append=True, inplace=True)
         all_res = all_res.unstack(level=-1).swaplevel(0, -1).swaplevel(0, -1, axis=1)
