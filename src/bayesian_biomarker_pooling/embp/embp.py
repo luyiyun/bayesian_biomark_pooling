@@ -28,33 +28,27 @@ def bootstrap_estimator(
     pbar: bool = True,
 ) -> pd.DataFrame:
     if isinstance(estimator, EM):
-        assert hasattr(
-            estimator, "params_"
-        ), "please run regular EM iteration firstly!"
+        assert hasattr(estimator, "params_"), "please run regular EM iteration firstly!"
         init_params = estimator.params_
         estimator._pbar = False
 
     seed = np.random.default_rng(seed)
-    ind_bootstrap = seed.choice(
-        Y.shape[0], (n_repeat, Y.shape[0]), replace=True
-    )
+    ind_bootstrap = seed.choice(Y.shape[0], (n_repeat, Y.shape[0]), replace=True)
 
     params_bs = []
-    for i in tqdm(
-        range(n_repeat), disable=not pbar, desc="Bootstrap: ", leave=False
-    ):
-        try:
-            ind_bs = ind_bootstrap[i]
-            estimator.run(
-                X[ind_bs],
-                S[ind_bs],
-                W[ind_bs],
-                Y[ind_bs],
-                None if Z is None else Z[ind_bootstrap],  # nbs x N x nz
-                init_params=init_params,
-            )
-        except Exception:
-            pass
+    for i in tqdm(range(n_repeat), disable=not pbar, desc="Bootstrap: ", leave=False):
+        # try:
+        ind_bs = ind_bootstrap[i]
+        estimator.run(
+            X[ind_bs],
+            S[ind_bs],
+            W[ind_bs],
+            Y[ind_bs],
+            None if Z is None else Z[ind_bs],  # nbs x N x nz
+            init_params=init_params,
+        )
+        # except Exception:
+        #     pass
         params_bs.append(estimator.parameters)
 
     return np.stack(params_bs, axis=0)
@@ -97,8 +91,7 @@ class EMBP(BiomarkerPoolBase):
                 import torch
             except ImportError:
                 raise ImportError(
-                    "torch is not installed, "
-                    "please install torch or BBP[torch]"
+                    "torch is not installed, please install torch or BBP[torch]"
                 )
         if (device != "cpu") and (
             outcome_type == "continue"
@@ -113,9 +106,7 @@ class EMBP(BiomarkerPoolBase):
         #     )
 
         self.outcome_type_ = outcome_type
-        self.max_iter_ = (
-            max_iter or {"continue": 500, "binary": 300}[outcome_type]
-        )
+        self.max_iter_ = max_iter or {"continue": 500, "binary": 300}[outcome_type]
         self.max_iter_inner_ = max_iter_inner
         self.delta1_ = delta1
         self.delta1_inner_ = delta1_inner
@@ -280,16 +271,12 @@ class EMBP(BiomarkerPoolBase):
             params_var_, ind_sigma2 = self._estimator.estimate_variance()
             self.params_["variance(log)"] = params_var_
             with warnings.catch_warnings():
-                warnings.filterwarnings(
-                    "ignore", "invalid value encountered in sqrt"
-                )
+                warnings.filterwarnings("ignore", "invalid value encountered in sqrt")
                 self.params_["std(log)"] = np.sqrt(params_var_)
             CI = np.stack(
                 [
-                    self.params_["estimate"]
-                    - zalpha * self.params_["std(log)"],
-                    self.params_["estimate"]
-                    + zalpha * self.params_["std(log)"],
+                    self.params_["estimate"] - zalpha * self.params_["std(log)"],
+                    self.params_["estimate"] + zalpha * self.params_["std(log)"],
                 ],
                 axis=1,
             )

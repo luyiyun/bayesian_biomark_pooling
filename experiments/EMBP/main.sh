@@ -5,7 +5,7 @@ ncore=20
 # runtool="uv run"
 runtool="python"
 
-# ================ test ================
+# >>> ===================== test =======================
 # 基础配置
 # nrepeat=10
 # ncore=1
@@ -30,14 +30,24 @@ runtool="python"
 # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试 (binary outcome)
-data_dir=./example_binary_1/data
-ana_dir=./example_binary_1/results
-eval_fn=eval_results.csv
-outcome_type=binary
-$runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
-    --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
-$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
-$runtool main.py evaluate -ad $ana_dir -of $eval_fn
+# data_dir=./example_binary_1/data
+# ana_dir=./example_binary_1/results
+# eval_fn=eval_results.csv
+# outcome_type=binary
+# $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
+#     --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
+# $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
+# $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+
+# 单次实验测试 (with Z)
+# data_dir=./example_with_z/data
+# ana_dir=./example_with_z/results
+# eval_fn=eval_results.csv
+# outcome_type=continue
+# $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
+#     --n_samples 100 --ratio_observed_x 0.2 --beta_x 1 --beta_z 1 2 -nr 10
+# $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc 1 --methods embp
+# $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 循环运行多种实验配置
 # seed=0
@@ -71,6 +81,8 @@ $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 # $runtool main.py simulate -ot $outcome_type -od $data_dir --n_samples 100 --ratio_observed_x 0.1 --beta_x 1 -nr 100
 # $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc 10
 # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+
+# <<< ===================== test =======================
 
 # ================ scenario5: continue outcome, without Z ================
 # seed=0

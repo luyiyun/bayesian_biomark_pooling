@@ -223,14 +223,6 @@ def main():
         help=("true sigma2_e, default is 1.0, can be a list whose length is n_studies"),
     )
     simu_parser.add_argument(
-        "-sx",
-        "--sigma2_x",
-        default=1.0,
-        type=float,
-        nargs="+",
-        help=("true sigma2_x, default is 1.0, can be a list whose length is n_studies"),
-    )
-    simu_parser.add_argument(
         "-sy",
         "--sigma2_y",
         default=(0.5, 0.75, 1.0, 1.25),

@@ -8,7 +8,6 @@ from .utils import ols
 
 
 class ContinueEM(NumpyEM):
-
     @property
     def parameter_names(self) -> list:
         return (
@@ -32,9 +31,7 @@ class ContinueEM(NumpyEM):
     ):
         super().prepare(X, S, W, Y, Z)
 
-        self._ybar_s = np.array(
-            [self._Y[ind].mean(axis=-1) for ind in self._ind_S]
-        )
+        self._ybar_s = np.array([self._Y[ind].mean(axis=-1) for ind in self._ind_S])
         self._yybar_s = np.array(
             [(self._Y[ind] ** 2).mean(axis=-1) for ind in self._ind_S]
         )
@@ -92,9 +89,7 @@ class ContinueEM(NumpyEM):
                 "sigma2_y",
             ]
         )
-        beta_z = (
-            params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
-        )
+        beta_z = params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
 
         sigma2_denominator = (
             sigma2_w * sigma2_x * beta_x**2
@@ -103,9 +98,7 @@ class ContinueEM(NumpyEM):
         )
         sigma2 = sigma2_w * sigma2_x * sigma2_y / sigma2_denominator
 
-        z_m_part = (
-            0.0 if self._Z is None else np.einsum("ij,j->i", self._Zm, beta_z)
-        )
+        z_m_part = 0.0 if self._Z is None else np.einsum("ij,j->i", self._Zm, beta_z)
         beta_0_m_long = beta_0[self._ind_m_inv]
         sigma2_y_m_long = sigma2_y[self._ind_m_inv]
         a_m_long = a[self._ind_m_inv]
@@ -115,10 +108,7 @@ class ContinueEM(NumpyEM):
         sigma2_m_long = sigma2[self._ind_m_inv]
 
         xhat_m = (
-            (self._Ym - beta_0_m_long - z_m_part)
-            * beta_x
-            * sigma2_w_m_long
-            * sigma2_x
+            (self._Ym - beta_0_m_long - z_m_part) * beta_x * sigma2_w_m_long * sigma2_x
             + (self._Wm - a_m_long) * b_m_long * sigma2_y_m_long * sigma2_x
             + mu_x * sigma2_w_m_long * sigma2_y_m_long
         ) / sigma2_denominator_m_long
@@ -129,22 +119,12 @@ class ContinueEM(NumpyEM):
     def m_step(self, params: ndarray) -> ndarray:
         vbar = self._Xhat2.mean(axis=-1)
         wxbar_s = np.stack(
-            [
-                np.mean(self._W[ind] * self._Xhat[ind], axis=-1)
-                for ind in self._ind_S
-            ]
+            [np.mean(self._W[ind] * self._Xhat[ind], axis=-1) for ind in self._ind_S]
         )
-        vbar_s = np.stack(
-            [np.mean(self._Xhat2[ind], axis=-1) for ind in self._ind_S]
-        )
-        xbar_s = np.stack(
-            [np.mean(self._Xhat[ind], axis=-1) for ind in self._ind_S]
-        )
+        vbar_s = np.stack([np.mean(self._Xhat2[ind], axis=-1) for ind in self._ind_S])
+        xbar_s = np.stack([np.mean(self._Xhat[ind], axis=-1) for ind in self._ind_S])
         xybar_s = np.array(
-            [
-                np.mean(self._Xhat[ind] * self._Y[ind], axis=-1)
-                for ind in self._ind_S
-            ]
+            [np.mean(self._Xhat[ind] * self._Y[ind], axis=-1) for ind in self._ind_S]
         )
 
         if self._Z is not None:
@@ -156,8 +136,8 @@ class ContinueEM(NumpyEM):
                 ],
                 axis=0,
             )
-            if self._batch_mode:
-                xzbar_s = xzbar_s.swapaxes(0, 1)
+            # if self._batch_mode:
+            #     xzbar_s = xzbar_s.swapaxes(0, 1)
         else:
             xzbar_s = 0.0
 
@@ -186,7 +166,7 @@ class ContinueEM(NumpyEM):
                 zd = np.einsum("ij,j->i", self._zbar_s, beta_z)
                 yzd = np.einsum("ij,j->i", self._yzbar_s, beta_z)
                 xzd = np.einsum("ij,j->i", xzbar_s, beta_z)
-                dzzd = np.einusm("i,ij,j->", beta_z, self._zzbar_s, beta_z)
+                dzzd = np.einsum("i,tij,j->t", beta_z, self._zzbar_s, beta_z)
 
             # beta_x
             # 为了避免zero variance的问题，需要使用一些通分技巧
@@ -201,9 +181,7 @@ class ContinueEM(NumpyEM):
                 self._n_s
                 * (xybar_s - beta_all_new[1 : (1 + self._ns)] * xbar_s - xzd)
                 * sigma2_y_prod
-            ).sum(axis=-1, keepdims=True) / (
-                self._n_s * vbar_s * sigma2_y_prod
-            ).sum(
+            ).sum(axis=-1, keepdims=True) / (self._n_s * vbar_s * sigma2_y_prod).sum(
                 axis=-1, keepdims=True
             )
             # beta_0
@@ -254,15 +232,14 @@ class ContinueEM(NumpyEM):
                 axis=-1,
             )
             logger_embp.info(
-                f"Inner iteration {i+1}: "
-                f"relative difference is {rdiff: .4f}"
+                f"Inner iteration {i + 1}: relative difference is {rdiff: .4f}"
             )
 
             # update parameters
             beta_all = beta_all_new
 
             if rdiff < self._delta2_inner:
-                logger_embp.info(f"Inner iteration stop, stop iter: {i+1}")
+                logger_embp.info(f"Inner iteration stop, stop iter: {i + 1}")
                 break
 
         else:
@@ -294,9 +271,7 @@ class ContinueEM(NumpyEM):
                 "sigma2_y",
             ]
         )
-        beta_z = (
-            params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
-        )
+        beta_z = params[self._params_ind["beta_z"]] if self._Z is not None else 0.0
         mu_x, sigma2_x = mu_x[0], sigma2_x[0]  # array->item
 
         self.e_step(params)
@@ -381,13 +356,11 @@ class ContinueEM(NumpyEM):
             F_zpart = 0.0
         K = np.array([[np.sum(temp_mul * vbar_s)]])
         A = (temp_mul * xbar_s)[None, :]
-        C = (
-            temp_mul * (xybar_s - beta_0 * xbar_s - beta_x * vbar_s + C_zpart)
-        )[None, :]
+        C = (temp_mul * (xybar_s - beta_0 * xbar_s - beta_x * vbar_s + C_zpart))[
+            None, :
+        ]
         D = np.diag(temp_mul)
-        F = np.diag(
-            temp_mul * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart)
-        )
+        F = np.diag(temp_mul * (self._ybar_s - beta_0 - beta_x * xbar_s + F_zpart))
         J = np.diag(
             0.5
             * temp_mul
@@ -409,6 +382,4 @@ class ContinueEM(NumpyEM):
             V3.insert(2, [B.T, E.T, G, H])
         V3 = np.block(V3)
 
-        return sc_block_diag(
-            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
-        )
+        return sc_block_diag(np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3))
