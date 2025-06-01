@@ -46,7 +46,7 @@ class Simulator:
     """the base class for simulating data from a bayesian biomarker pooling model"""
 
     mu_x: float = 0
-    sigma2_x: float = 1
+    sigma2_x: float = 1.0
     betax: float = 1.0
     beta0: Union[float, Sequence[float]] = 1.0
     a: Sequence[float] = (-3, 1, -1, 3)
