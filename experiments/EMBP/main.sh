@@ -30,14 +30,28 @@ runtool="uv run"
 # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试 (binary outcome)
-data_dir=./example_binary_1/data
-ana_dir=./example_binary_1/results
+# data_dir=./example_binary_1/data
+# ana_dir=./example_binary_1/results
+# eval_fn=eval_results.csv
+# outcome_type=binary
+# $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
+#     --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
+# $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
+# $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+
+# 单次实验测试
+data_dir=./example_continue_xonly_1/data
+ana_dir=./example_continue_xonly_1/results
 eval_fn=eval_results.csv
-outcome_type=binary
-$runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
-    --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
-$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
-$runtool main.py evaluate -ad $ana_dir -of $eval_fn
+outcome_type=continue
+for n_samples in 100 300 500 700 1000; do
+    data_dir_i=${data_dir}/nsamples_${n_samples}
+    ana_dir_i=${ana_dir}/nsamples_${n_samples}
+    $runtool main.py simulate -ot $outcome_type -od $data_dir_i --seed 2 \
+        --n_samples $n_samples --ratio_observed_x 0.1 --beta_x 1 -nr 1000
+    $runtool main.py analyze -ot $outcome_type -dd $data_dir_i -od $ana_dir_i -nc 10 --methods xonly
+    $runtool main.py evaluate -ad $ana_dir_i -of $eval_fn
+done
 
 # 循环运行多种实验配置
 # seed=0
