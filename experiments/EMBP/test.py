@@ -427,9 +427,11 @@ def main():
 
     # ================= 读取模拟数据，进行模拟实验 =================
     fn = "./example_binary_error/data.csv"
-    df = pd.read_csv(fn, index_col=None)
-    for ri in range(760, 771):
-        df = df.query("repeat == 767")
+    df_all = pd.read_csv(fn, index_col=None)
+    for ri in range(766, 767):
+        print(f"repeat {ri}")
+        df = df_all.query(f"repeat == {ri}")
+        print(df.head())
         embp_kwargs = {
             "ci": not args.no_ci,
             "ci_method": args.ci_method,
