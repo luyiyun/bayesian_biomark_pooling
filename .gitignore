@@ -13,3 +13,4 @@ results/
 *.jpg
 !example_data.csv
 experiments/EMBP/example*
+experiments/EMBP/scenario*

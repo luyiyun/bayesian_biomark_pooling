@@ -2,8 +2,8 @@ set -e # 一旦出现错误，立即停止运行，并打印出错误信息。
 
 nrepeat=1000
 ncore=20
-# runtool="uv run"
-runtool="python"
+runtool="uv run"
+# runtool="python"
 
 # >>> ===================== test =======================
 # 基础配置
@@ -30,28 +30,31 @@ runtool="python"
 # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试 (binary outcome)
-# data_dir=./example_binary_1/data
-# ana_dir=./example_binary_1/results
-# eval_fn=eval_results.csv
-# outcome_type=binary
-# $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
-#     --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
-# $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
-# $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+nrepeat=10
+ncore=1
+data_dir=./example_binary_2/data
+ana_dir=./example_binary_2/results
+eval_fn=eval_results.csv
+outcome_type=binary
+$runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
+    --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
+$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
+$runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试
-data_dir=./example_continue_xonly_1/data
-ana_dir=./example_continue_xonly_1/results
-eval_fn=eval_results.csv
-outcome_type=continue
-for n_samples in 100 300 500 700 1000; do
-    data_dir_i=${data_dir}/nsamples_${n_samples}
-    ana_dir_i=${ana_dir}/nsamples_${n_samples}
-    $runtool main.py simulate -ot $outcome_type -od $data_dir_i --seed 2 \
-        --n_samples $n_samples --ratio_observed_x 0.1 --beta_x 1 -nr 1000
-    $runtool main.py analyze -ot $outcome_type -dd $data_dir_i -od $ana_dir_i -nc 10 --methods xonly
-    $runtool main.py evaluate -ad $ana_dir_i -of $eval_fn
-done
+# data_dir=./example_continue_xonly_1/data
+# ana_dir=./example_continue_xonly_1/results
+# eval_fn=eval_results.csv
+# outcome_type=continue
+# for n_samples in 100 300 500 700 1000; do
+#     data_dir_i=${data_dir}/nsamples_${n_samples}
+#     ana_dir_i=${ana_dir}/nsamples_${n_samples}
+#     $runtool main.py simulate -ot $outcome_type -od $data_dir_i --seed 2 \
+#         --n_samples $n_samples --ratio_observed_x 0.1 --beta_x 1 -nr 1000
+#     $runtool main.py analyze -ot $outcome_type -dd $data_dir_i -od $ana_dir_i -nc 10 --methods xonly
+#     $runtool main.py evaluate -ad $ana_dir_i -of $eval_fn
+# done
+
 # 单次实验测试 (with Z)
 # data_dir=./example_with_z/data
 # ana_dir=./example_with_z/results
@@ -214,27 +217,27 @@ done
 #     -sp  n_sample_per_studies betax
 
 # ================ scenario10: continue outcome, with Z ================
-seed=5000
-num_samples=(100 150 200 250)
-ratio_observed_x=(0.2)
-beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
-for n in ${num_samples[@]}; do
-    for rx in ${ratio_observed_x[@]}; do
-        for bx in ${beta_x[@]}; do
-            seed=$((seed+1))
-            echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
-            data_dir=./scenario10/data_continue_wo_z_${n}_${rx}_${bx}
-            ana_dir=./scenario10/ana_continue_wo_z_${n}_${rx}_${bx}
-            eval_fn=eval_results.csv
-            $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
-                --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 -nr $nrepeat
-            $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
-            $runtool main.py evaluate -ad $ana_dir -of $eval_fn
-        done
-    done
-done
-$runtool main.py summarize -efp "./scenario10/ana_continue_wo_z_*/eval_results.csv" -of ./scenario10/summary.xlsx \
-    -sp  n_sample_per_studies betax
+# seed=5000
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario10/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario10/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario10/ana_continue_wo_z_*/eval_results.csv" -of ./scenario10/summary.xlsx \
+#     -sp  n_sample_per_studies betax
 
 
 # ================ scenario1003: continue binary, without Z ================
