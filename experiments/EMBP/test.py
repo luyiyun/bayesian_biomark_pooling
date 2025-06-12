@@ -23,7 +23,6 @@ from bayesian_biomarker_pooling.simulate import (
 )
 from bayesian_biomarker_pooling import EMBP
 from bayesian_biomarker_pooling.utils import Timer
-import ipdb
 
 
 def method_xonly(
@@ -426,103 +425,17 @@ def main():
 
     args = parser.parse_args()
 
-    # ================= 模拟数据，并保存 =================
-    if args.subcommand == "simulate":
-        if osp.exists(args.output_dir):
-            raise ValueError(
-                f"Output directory {args.output_dir} already "
-                "exists, please remove it first."
-            )
-
-        def proc_args(x):
-            if x is None:
-                return x
-            if isinstance(x, (list, tuple)) and len(x) == 1:
-                return [x[0]] * args.n_studies
-            assert len(x) == args.n_studies, (
-                f"length of {x} must be equal to n_studies {args.n_studies}"
-            )
-            return x
-
-        ratio_observed_x = proc_args(args.ratio_observed_x)
-        n_sample_per_study = proc_args(args.n_samples)
-        n_knowX_per_study = [
-            int(r * n) for r, n in zip(ratio_observed_x, n_sample_per_study)
-        ]
-
-        if args.outcome_type == "binary":
-            simulator = BinarySimulator(
-                sigma2_x=args.sigma2_x,
-                beta0=proc_args(args.beta_0),
-                a=proc_args(args.a),
-                b=proc_args(args.b),
-                sigma2_e=proc_args(args.sigma2_e),
-                n_sample_per_studies=n_sample_per_study,
-                n_knowX_per_studies=n_knowX_per_study,
-                betaz=args.beta_z,
-                OR=args.OR or np.exp(args.beta_x),
-                prevalence=args.prevalence,
-                n_knowX_balance=True,
-            )
-        else:
-            simulator = ContinuousSimulator(
-                sigma2_x=args.sigma2_x,
-                beta0=proc_args(args.beta_0),
-                a=proc_args(args.a),
-                b=proc_args(args.b),
-                sigma2_e=proc_args(args.sigma2_e),
-                n_sample_per_studies=n_sample_per_study,
-                n_knowX_per_studies=n_knowX_per_study,
-                betaz=args.beta_z,
-                betax=args.beta_x,
-                sigma2_y=proc_args(args.sigma2_y),
-            )
-        
-        df_all = []
-        for i in tqdm(range(args.n_repeats), desc="Simulate: "):
-            df = simulator.simulate(seed=i + args.seed)
-            df["repeat"] = i
-            df_all.append(df)
-        df_all = pd.concat(df_all, ignore_index=True)
-        # ipdb.set_trace()
-
-        os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
-        df_all.to_csv(osp.join(args.output_dir, "data.csv"), index=False)
-        with open(osp.join(args.output_dir, "params.json"), "w") as f:
-            args_dict = asdict(simulator)
-            args_dict.update(args.__dict__)
-            json.dump(
-                args_dict,
-                f,
-                sort_keys=True,
-                default=default_serializer,
-            )
-
-        return
-
     # ================= 读取模拟数据，进行模拟实验 =================
-    if args.subcommand == "analyze":
-        if osp.exists(args.output_dir):
-            raise ValueError(
-                f"Output directory {args.output_dir} already "
-                "exists, please remove it first."
-            )
-
-        fn = osp.join(args.data_dir, "data.csv")
-        df = pd.read_csv(fn, index_col=None)
-
-        # with open(osp.join(args.data_dir, "params.json"), "r") as f:
-        #     simu_args = json.load(f)
-
-        if "repeat" not in df.columns:
-            df_iter = [(0, df)]
-        else:
-            df_iter = df.groupby("repeat")
-
+    fn = "./example_binary_error/data.csv"
+    df_all = pd.read_csv(fn, index_col=None)
+    for ri in range(766, 767):
+        print(f"repeat {ri}")
+        df = df_all.query(f"repeat == {ri}")
+        print(df.head())
         embp_kwargs = {
             "ci": not args.no_ci,
             "ci_method": args.ci_method,
-            "pbar": args.embp_progress_bar,
+            "pbar": True,
             "max_iter": args.max_iter,
             "seed": args.seed,
             "n_bootstrap": args.n_bootstrap,
@@ -533,129 +446,28 @@ def main():
             "device": "cuda:0" if args.gpu else "cpu",
             "importance_sampling_maxK": args.importance_sampling_maxK,
         }
-        res_all = {k: [] for k in args.methods}
 
-            for i, dfi in tqdm(df_iter, desc="Analyze: "):
-                zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
-                X = dfi["X"].values
-                Y = dfi["Y"].values
-                W = dfi["W"].values
-                S = dfi["S"].values
-                Z = dfi.loc[:, zind].values if zind.any() else None
+        zind = df.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
+        X = df["X"].values
+        Y = df["Y"].values
+        W = df["W"].values
+        S = df["S"].values
+        Z = df.loc[:, zind].values if zind.any() else None
 
-                resi = analyze_data(
-                    X,
-                    Y,
-                    W,
-                    S,
-                    Z,
-                    args.gpu,
-                    args.ncores,
-                    args.outcome_type,
-                    args.methods,
-                    embp_kwargs,
-                )
-                for k, v in resi.items():
-                    res_all[k].append(v)
-
-                # if i >= 5:
-                #     break
-        elif args.gpu:
-            pass
-            raise NotImplementedError("GPU multi-processing is not implemented yet.")
-            # n_cudas = torch.cuda.device_count()
-            # if n_cudas != args.ncores:
-            #     print(
-            #         f"Only {n_cudas} gpus, thus "
-            #         f"open {n_cudas} subprocesses, not {args.ncores}."
-            #     )
-
-            # manager = mp_torch.Manager()
-            # q = manager.Queue()
-            # for i in range(n_cudas):
-            #     q.put(f"cuda:{i}")
-
-            # with mp_torch.Pool(n_cudas) as pool:
-            #     tmp_reses = [
-            #         pool.apply_async(
-            #             trial_once_by_simulator_and_estimator,
-            #             kwds={
-            #                 "type_outcome": args.outcome_type,
-            #                 "simulator": simulator,
-            #                 "estimator": embp_kwargs,
-            #                 "seed": j + seedi,
-            #                 "methods": args.methods,
-            #                 "gpu_and_mp": False,
-            #                 "logging": False,
-            #                 "queue": q,
-            #             },
-            #         )
-            #         for j in range(args.nrepeat)
-            #     ]
-            #     for tmp_resi in tqdm(tmp_reses):
-            #         resi = tmp_resi.get()
-            #         for k, arr in resi.items():
-            #             res_arrs.setdefault(k, []).append(arr)
-        else:  # use cpu multi-processing
-            with mp.Pool(args.ncores) as pool:
-                tmp_reses = []
-                for i, dfi in df_iter:
-                    zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
-                    X = dfi["X"].values
-                    Y = dfi["Y"].values
-                    W = dfi["W"].values
-                    S = dfi["S"].values
-                    Z = dfi.loc[:, zind].values if zind.any() else None
-                    tmp_resi = pool.apply_async(
-                        analyze_data,
-                        (
-                            X,
-                            Y,
-                            W,
-                            S,
-                            Z,
-                            args.gpu,
-                            args.ncores,
-                            args.outcome_type,
-                            args.methods,
-                            embp_kwargs,
-                        ),
-                    )
-                    tmp_reses.append(tmp_resi)
-                for tmp_resi in tqdm(tmp_reses, desc="Analyze: "):
-                    resi = tmp_resi.get()
-                    for k, v in resi.items():
-                        res_all[k].append(v)
-
-        res_all = {
-            k: xr.DataArray(
-                np.stack([vi.values for vi in v], axis=0),
-                dims=("repeat", "params", "statistic"),
-                coords={
-                    "params": v[0].index.values,
-                    "statistic": v[0].columns.values,
-                },
-            )
-            # if k == "embp"
-            # else xr.DataArray(
-            #     np.stack(v, axis=0)[:, None, :],
-            #     dims=("repeat", "params", "statistic"),
-            #     coords={
-            #         "params": ["beta_x"],
-            #         "statistic": ["estimate", "CI_1", "CI_2"],
-            #     },
-            # )
-            for k, v in res_all.items()
-        }
-        res_all = xr.Dataset(res_all)
-
-        os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
-        res_all.to_netcdf(osp.join(args.output_dir, "analyzed_results.nc"))
-        with open(osp.join(args.output_dir, "params.json"), "w") as f:
-            ana_args = args.__dict__
-            json.dump(ana_args, f)
-
-        return
+        res = analyze_data(
+            X,
+            Y,
+            W,
+            S,
+            Z,
+            args.gpu,
+            args.ncores,
+            args.outcome_type,
+            args.methods,
+            embp_kwargs,
+        )
+        print(res)
+    return
 
     # ================= 读取实验结果和模拟参数，计算评价指标 =================
     if args.subcommand == "evaluate":
@@ -679,7 +491,6 @@ def main():
             res_df["bias"].append(diff.mean())
             res_df["mse"].append((diff**2).mean())
             res_df["bias_se"].append(diff.std() / np.sqrt(diff.shape[0]))
-            res_df["pct_bias"].append(diff.mean()/true_beta_x*100)
             if not ana_args["no_ci"]:
                 in_ci = (
                     da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
@@ -731,12 +542,8 @@ def main():
         ]
         all_res["bias"] = [
             # f"{m:.4f}({s:.4f})" for m, s in zip(all_res["bias"], all_res["bias_sd"])
-            f"{m:.2f}({s:.2f})"
+            f"{m:.4f}({s:.4f})"
             for m, s in zip(all_res["bias"], all_res["bias_se"])
-        ]
-        all_res["pct_bias"] = [
-            f"{m:.2f}({s:.2f})"
-            for m, s in zip(all_res["pct_bias"], all_res["bias_se"])
         ]
 
         # all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)

@@ -1,7 +1,7 @@
 set -e # 一旦出现错误，立即停止运行，并打印出错误信息。
 
 nrepeat=1000
-ncore=20
+ncore=23
 # runtool="uv run"
 runtool="python"
 
@@ -10,6 +10,54 @@ runtool="python"
 # nrepeat=10
 # ncore=1
 # runtool="uv run"
+
+# 测试方差问题
+# data_dir=./test/data_continue_wo_z_muti5
+# ana_dir=./test/ana_continue_wo_z_muti5
+# python main.py simulate -ot continue -od $data_dir --seed 0 \
+#     --n_samples 100 --ratio_observed_x 0.2 --beta_x 1 --sigma2_x 5 --sigma2_e 5 -nr 1000 
+
+# ================ scenario5: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./test/scenario5/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./test/scenario5/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat
+#             # $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+
+# ================ scenario9: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./test/scenario9/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./test/scenario9/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             python main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --sigma2_x 5 --sigma2_e 5 -nr $nrepeat
+#         done
+#     done
+# done
+
+
 
 # 单次实验测试
 # data_dir=./example_1/data
@@ -178,7 +226,7 @@ runtool="python"
 #     -sp  n_sample_per_studies betax
 
 # ================ scenario9: continue outcome, without Z ================
-# seed=4000
+# seed=0
 # num_samples=(100 150 200 250)
 # ratio_observed_x=(0.2)
 # beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
@@ -200,75 +248,422 @@ runtool="python"
 # $runtool main.py summarize -efp "./scenario9/ana_continue_wo_z_*/eval_results.csv" -of ./scenario9/summary.xlsx \
 #     -sp  n_sample_per_studies betax
 
-# ================ scenario10: continue outcome, with Z ================
-seed=5000
-num_samples=(100 150 200 250)
-ratio_observed_x=(0.2)
-beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
-for n in ${num_samples[@]}; do
-    for rx in ${ratio_observed_x[@]}; do
-        for bx in ${beta_x[@]}; do
-            seed=$((seed+1))
-            echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
-            data_dir=./scenario10/data_continue_wo_z_${n}_${rx}_${bx}
-            ana_dir=./scenario10/ana_continue_wo_z_${n}_${rx}_${bx}
-            eval_fn=eval_results.csv
-            $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
-                --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 -nr $nrepeat
-            $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
-            $runtool main.py evaluate -ad $ana_dir -of $eval_fn
-        done
-    done
-done
-$runtool main.py summarize -efp "./scenario10/ana_continue_wo_z_*/eval_results.csv" -of ./scenario10/summary.xlsx \
-    -sp  n_sample_per_studies betax
-
-
-# ================ scenario1003: continue binary, without Z ================
-# seed=0
+# ================ scenario10: continue outcome, with Z-1 ================
+# seed=5000
 # num_samples=(100 150 200 250)
-# ratio_observed_x=(0.1)
-# ORs=(1.25 1.5 1.75 2 2.25 2.5 2.75 3)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
 # for n in ${num_samples[@]}; do
 #     for rx in ${ratio_observed_x[@]}; do
-#         for OR in ${ORs[@]}; do
+#         for bx in ${beta_x[@]}; do
 #             seed=$((seed+1))
-#             echo "<==========> n=$n, rx=$rx, OR=$OR, seed=$seed"
-#             data_dir=./scenario1003/data_binary_wo_z_${n}_${rx}_${OR}
-#             ana_dir=./scenario1003/ana_binary_wo_z_${n}_${rx}_${OR}
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario10/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario10/ana_continue_wo_z_${n}_${rx}_${bx}
 #             eval_fn=eval_results.csv
-#             $runtool main.py simulate -ot binary -od $data_dir --seed $seed \
-#                 --n_samples $n --ratio_observed_x $rx --OR $OR -nr $nrepeat -pr 0.25
-#             $runtool main.py analyze -ot binary -dd $data_dir -od $ana_dir -nc $ncore --methods xonly naive
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
 #             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 #         done
 #     done
 # done
-# $runtool main.py summarize -efp "./scenario1003/ana_binary_wo_z_*/eval_results.csv" -of ./scenario1003/summary1.xlsx \
-#     -sp  n_sample_per_studies OR
+# $runtool main.py summarize -efp "./scenario10/ana_continue_wo_z_*/eval_results.csv" -of ./scenario10/summary.xlsx \
+#     -sp  n_sample_per_studies betax
 
-# ================ scenario1004: continue binary, without Z ================
-# seed=1000
+# # ================ scenario11: continue outcome, with Z-2 ================
+# seed=5000
 # num_samples=(100 150 200 250)
-# ratio_observed_x=(0.1)
-# ORs=(1.25 1.5 1.75 2 2.25 2.5 2.75 3)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
 # for n in ${num_samples[@]}; do
 #     for rx in ${ratio_observed_x[@]}; do
-#         for OR in ${ORs[@]}; do
+#         for bx in ${beta_x[@]}; do
 #             seed=$((seed+1))
-#             echo "<==========> n=$n, rx=$rx, OR=$OR, seed=$seed"
-#             data_dir=./scenario1004/data_binary_wo_z_${n}_${rx}_${OR}
-#             ana_dir=./scenario1004/ana_binary_wo_z_${n}_${rx}_${OR}
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario11/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario11/ana_continue_wo_z_${n}_${rx}_${bx}
 #             eval_fn=eval_results.csv
-#             python main.py simulate -ot binary -od $data_dir --seed $seed \
-#                 --n_samples $n --ratio_observed_x $rx --OR $OR --sigma2_x 10 --sigma2_e 10 -nr $nrepeat -pr 025
-#             python main.py analyze -ot binary -dd $data_dir -od $ana_dir -nc $ncore --methods xonly naive
-#             python main.py evaluate -ad $ana_dir -of $eval_fn
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 #         done
 #     done
 # done
-# $runtool main.py summarize -efp "./scenario1004/ana_binary_wo_z_*/eval_results.csv" -of ./scenario1004/summary1.xlsx \
-#     -sp  n_sample_per_studies OR
+# $runtool main.py summarize -efp "./scenario11/ana_continue_wo_z_*/eval_results.csv" -of ./scenario11/summary.xlsx \
+#     -sp  n_sample_per_studies betax
+
+# # ================ scenario12: continue outcome, with Z-3 ================
+# seed=5000
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario12/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario12/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 1 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario12/ana_continue_wo_z_*/eval_results.csv" -of ./scenario12/summary.xlsx \
+#     -sp  n_sample_per_studies betax
+
+    
+# # ================ scenario13: continue outcome, with Z-4 ================
+# seed=5000
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario13/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario13/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 1 1 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario13/ana_continue_wo_z_*/eval_results.csv" -of ./scenario13/summary.xlsx \
+#     -sp  n_sample_per_studies betax
+
+# # ================ scenario14: continue outcome, with Z-5 ================
+# seed=5000
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario14/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario14/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --beta_z 1 1 1 1 1 -nr $nrepeat
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario14/ana_continue_wo_z_*/eval_results.csv" -of ./scenario14/summary.xlsx \
+#     -sp  n_sample_per_studies betax
+
+# # ================ scenario2001: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.1 0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./scenario15/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./scenario15/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_y 5
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario15/ana_continue_wo_z_*/eval_results.csv" -of ./scenario15/summary.xlsx \
+#     -sp  betax n_samples ratio_observed_x  
+
+# ================ scenario2002: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# rx=0.2
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1 10)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2002/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2002/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2002/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2002/summary.xlsx \
+#     -sp  betax n_samples sigma2_x 
+
+# ================ scenario2003: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# rx=0.2
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1 10)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "19 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2003/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2003/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2003/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2003/summary.xlsx \
+#     -sp  num_samples sigma2_x betax
+
+# ================ scenario2004: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# rx=2200
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2004/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2004/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x 0.2 0.2 0 0 --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2004/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2004/summary.xlsx \
+#     -sp  betax n_samples sigma2_x
+
+# ================ scenario2005: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 200)
+# rx=4400
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "19 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2005/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2005/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x 0.4 0.4 0 0 --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2005/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2005/summary.xlsx \
+#     -sp  betax n_samples
+
+# ================ scenario2006: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 200)
+# rx=0.4
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2006/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2006/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2006/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2006/summary.xlsx \
+#     -sp  betax n_samples
+
+# ================ scenario2007: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 200)
+# rx=0.3
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2007/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2007/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2007/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2007/summary.xlsx \
+#     -sp  n_samples betax 
+
+# ================ scenario2008: continue outcome, without Z ================
+# seed=1000
+# num_samples=(100 200)
+# rx=0.2
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2008/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2008/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e 10 --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2008/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2008/summary.xlsx \
+#     -sp n_samples  betax 
+
+# ================ scenario2009: continue outcome, without Z ================
+# seed=2000
+# num_samples=(100 200)
+# rx=0.2
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2009/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2009/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e 0.1 --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2009/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2009/summary.xlsx \
+#     -sp n_samples  betax 
+
+# ================ scenario2010: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 200)
+# rx=0.1
+# beta_x=(0.5 1.0 1.5 2.0 2.5 3.0 3.5 4.0)
+# sigma2_xs=(1)
+# for n in ${num_samples[@]}; do
+#     for bx in ${beta_x[@]}; do
+#         for sigma2_x in ${sigma2_xs[@]}; do
+#             seed=$((seed+1))
+#             sigma2_y=$(echo "9 * ($bx ^ 2) * $sigma2_x" | bc -l)
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, sigma2_x=$sigma2_x, sigma2_y=$sigma2_y, seed=$seed"
+#             data_dir=./scenario2010/data_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             ana_dir=./scenario2010/ana_continue_wo_z_${n}_${sigma2_x}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat --sigma2_x $sigma2_x --sigma2_e $sigma2_x --sigma2_y $sigma2_y
+#             $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario2010/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2010/summary.xlsx \
+#     -sp  n_samples betax 
+
+# ================ scenario1001: continue binary, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# prevalences=(0.25 0.5 0.05)
+# ratio_observed_x=(0.1)
+# ORs=(1.25 1.5 1.75 2 2.25 2.5 2.75 3)
+# for n in ${num_samples[@]}; do
+#     for pr in ${prevalences[@]};do
+#         for rx in ${ratio_observed_x[@]}; do
+#             for OR in ${ORs[@]}; do
+#                 seed=$((seed+1))
+#                 echo "<==========> n=$n, pr=$pr, rx=$rx, OR=$OR, seed=$seed"
+#                 data_dir=./scenario1001/data_binary_wo_z_${n}_${pr}_${rx}_${OR}
+#                 ana_dir=./scenario1001/ana_binary_wo_z_${n}_${pr}_${rx}_${OR}
+#                 eval_fn=eval_results.csv
+#                 $runtool main.py simulate -ot binary -od $data_dir --seed $seed \
+#                     --n_samples $n --ratio_observed_x $rx --OR $OR -nr $nrepeat -pr $pr
+#                 $runtool main.py analyze -ot binary -dd $data_dir -od $ana_dir -nc $ncore
+#                 $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#             done
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario1001/ana_binary_wo_z_*/eval_results.csv" -of ./scenario1001/summary.xlsx \
+#     -sp  prevalences n_sample_per_studies OR
+
+$runtool main.py analyze -ot binary -dd ./scenario1001/data_binary_wo_z_100_0.25_0.1_1.5 -od ./scenario1001/ana_binary_wo_z_100_0.25_0.1_1.5 -nc 1
+# # ================ scenario1002: continue binary, without Z ================
+# seed=1000
+# num_samples=(100 150 200 250)
+# prevalences=(0.25 0.5 0.05)
+# ratio_observed_x=(0.1)
+# ORs=(1.25 1.5 1.75 2 2.25 2.5 2.75 3)
+# for n in ${num_samples[@]}; do
+#     for pr in ${prevalences[@]};do
+#         for rx in ${ratio_observed_x[@]}; do
+#             for OR in ${ORs[@]}; do
+#                 seed=$((seed+1))
+#                 echo "<==========> n=$n, pr=$pr, rx=$rx, OR=$OR, seed=$seed"
+#                 data_dir=./scenario1002/data_binary_wo_z_${n}_${pr}_${rx}_${OR}
+#                 ana_dir=./scenario1002/ana_binary_wo_z_${n}_${pr}_${rx}_${OR}
+#                 eval_fn=eval_results.csv
+#                 python main.py simulate -ot binary -od $data_dir --seed $seed \
+#                     --n_samples $n --ratio_observed_x $rx --OR $OR --sigma2_x 10 --sigma2_e 10 -nr $nrepeat -pr $pr
+#                 python main.py analyze -ot binary -dd $data_dir -od $ana_dir -nc $ncore --methods xonly naive
+#                 python main.py evaluate -ad $ana_dir -of $eval_fn
+#             done
+#         done
+#     done
+# done
+# $runtool main.py summarize -efp "./scenario1002/ana_binary_wo_z_*/eval_results.csv" -of ./scenario1002/summary.xlsx \
+#     -sp  prevalences n_sample_per_studies OR
 
 # ================ continue outcome, without Z ================
 # num_samples=(100 150 200 250)
