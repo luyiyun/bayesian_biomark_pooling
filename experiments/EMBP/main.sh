@@ -1,7 +1,7 @@
 set -e # 一旦出现错误，立即停止运行，并打印出错误信息。
 
 nrepeat=1000
-ncore=20
+ncore=23
 # runtool="uv run"
 runtool="python"
 
@@ -10,6 +10,54 @@ runtool="python"
 # nrepeat=10
 # ncore=1
 # runtool="uv run"
+
+# 测试方差问题
+# data_dir=./test/data_continue_wo_z_muti5
+# ana_dir=./test/ana_continue_wo_z_muti5
+# python main.py simulate -ot continue -od $data_dir --seed 0 \
+#     --n_samples 100 --ratio_observed_x 0.2 --beta_x 1 --sigma2_x 5 --sigma2_e 5 -nr 1000 
+
+# ================ scenario5: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./test/scenario5/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./test/scenario5/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             $runtool main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx -nr $nrepeat
+#             # $runtool main.py analyze -ot continue -dd $data_dir -od $ana_dir -nc $ncore
+#             # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+#         done
+#     done
+# done
+
+# ================ scenario9: continue outcome, without Z ================
+# seed=0
+# num_samples=(100 150 200 250)
+# ratio_observed_x=(0.2)
+# beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
+# for n in ${num_samples[@]}; do
+#     for rx in ${ratio_observed_x[@]}; do
+#         for bx in ${beta_x[@]}; do
+#             seed=$((seed+1))
+#             echo "<==========> n=$n, rx=$rx, bx=$bx, seed=$seed"
+#             data_dir=./test/scenario9/data_continue_wo_z_${n}_${rx}_${bx}
+#             ana_dir=./test/scenario9/ana_continue_wo_z_${n}_${rx}_${bx}
+#             eval_fn=eval_results.csv
+#             python main.py simulate -ot continue -od $data_dir --seed $seed \
+#                 --n_samples $n --ratio_observed_x $rx --beta_x $bx --sigma2_x 5 --sigma2_e 5 -nr $nrepeat
+#         done
+#     done
+# done
+
+
 
 # 单次实验测试
 # data_dir=./example_1/data
@@ -196,7 +244,7 @@ $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 #     -sp  n_sample_per_studies betax
 
 # ================ scenario9: continue outcome, without Z ================
-# seed=4000
+# seed=0
 # num_samples=(100 150 200 250)
 # ratio_observed_x=(0.2)
 # beta_x=(0.0 0.5 1.0 1.5 2.0 2.5 3.0)
