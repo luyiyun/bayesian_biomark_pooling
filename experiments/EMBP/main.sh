@@ -264,7 +264,7 @@ $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 # $runtool main.py summarize -efp "./scenario9/ana_continue_wo_z_*/eval_results.csv" -of ./scenario9/summary.xlsx \
 #     -sp  n_sample_per_studies betax
 
-# ================ scenario10: continue outcome, with Z ================
+# ================ scenario10: continue outcome, with Z-1 ================
 # seed=5000
 # num_samples=(100 150 200 250)
 # ratio_observed_x=(0.2)
@@ -286,7 +286,6 @@ $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 # done
 # $runtool main.py summarize -efp "./scenario10/ana_continue_wo_z_*/eval_results.csv" -of ./scenario10/summary.xlsx \
 #     -sp  n_sample_per_studies betax
-
 
 # # ================ scenario11: continue outcome, with Z-2 ================
 # seed=5000
