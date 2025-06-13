@@ -1,7 +1,7 @@
 set -e # 一旦出现错误，立即停止运行，并打印出错误信息。
 
-# nrepeat=1000
-# ncore=20
+nrepeat=1000
+ncore=20
 # runtool="uv run"
 runtool="python"
 
