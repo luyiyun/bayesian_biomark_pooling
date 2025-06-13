@@ -78,12 +78,15 @@ def analyze_data(
             elif methodi == "naive":
                 resi = method_naive(W, Y, Z, outcome_type)
             elif methodi == "embp":
-                estimator = EMBP(
-                    outcome_type=outcome_type,
-                    **embp_kwargs,
-                )
-                estimator.fit(X, S, W, Y, Z)
-                resi = estimator.params_
+                try:
+                    estimator = EMBP(
+                        outcome_type=outcome_type,
+                        **embp_kwargs,
+                    )
+                    estimator.fit(X, S, W, Y, Z)
+                    resi = estimator.params_
+                except Exception:
+                    return None
             else:
                 raise ValueError(f"Unknown method: {methodi}")
 
@@ -535,6 +538,7 @@ def main():
 
         if args.ncores <= 1:
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
+                fail_indices = []
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
@@ -554,10 +558,11 @@ def main():
                     args.methods,
                     embp_kwargs,
                 )
-
+                
+                if resi is None:
+                    continue
                 for k, v in resi.items():
                     res_all[k].append(v)
-
                 # if i >= 5:
                 #     break
 
@@ -622,41 +627,48 @@ def main():
                             embp_kwargs,
                         ),
                     )
+                    if tmp_resi is None:
+                        continue
                     tmp_reses.append(tmp_resi)
+                    
                 for tmp_resi in tqdm(tmp_reses, desc="Analyze: "):
                     resi = tmp_resi.get()
+                    if resi is None:
+                        continue
                     for k, v in resi.items():
                         res_all[k].append(v)
+        if v is None:
+            print("unable to analyze all the data")
+        else:
+            res_all = {
+                k: xr.DataArray(
+                    np.stack([vi.values for vi in v], axis=0),
+                    dims=("repeat", "params", "statistic"),
+                    coords={
+                        "params": v[0].index.values,
+                        "statistic": v[0].columns.values,
+                    },
+                )
+            
+                # if k == "embp"
+                # else xr.DataArray(
+                #     np.stack(v, axis=0)[:, None, :],
+                #     dims=("repeat", "params", "statistic"),
+                #     coords={
+                #         "params": ["beta_x"],
+                #         "statistic": ["estimate", "CI_1", "CI_2"],
+                #     },
+                # )
+                for k, v in res_all.items()
+            }
+            res_all = xr.Dataset(res_all)
 
-        res_all = {
-            k: xr.DataArray(
-                np.stack([vi.values for vi in v], axis=0),
-                dims=("repeat", "params", "statistic"),
-                coords={
-                    "params": v[0].index.values,
-                    "statistic": v[0].columns.values,
-                },
-            )
-            # if k == "embp"
-            # else xr.DataArray(
-            #     np.stack(v, axis=0)[:, None, :],
-            #     dims=("repeat", "params", "statistic"),
-            #     coords={
-            #         "params": ["beta_x"],
-            #         "statistic": ["estimate", "CI_1", "CI_2"],
-            #     },
-            # )
-            for k, v in res_all.items()
-        }
-        res_all = xr.Dataset(res_all)
-
-        os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
-        res_all.to_netcdf(osp.join(args.output_dir, "analyzed_results.nc"))
-        with open(osp.join(args.output_dir, "params.json"), "w") as f:
-            ana_args = args.__dict__
-            json.dump(ana_args, f)
-
-        return
+            os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
+            res_all.to_netcdf(osp.join(args.output_dir, "analyzed_results.nc"))
+            with open(osp.join(args.output_dir, "params.json"), "w") as f:
+                ana_args = args.__dict__
+                json.dump(ana_args, f)
+            return
 
     # ================= 读取实验结果和模拟参数，计算评价指标 =================
     if args.subcommand == "evaluate":
@@ -680,6 +692,7 @@ def main():
             res_df["bias"].append(diff.mean())
             res_df["mse"].append((diff**2).mean())
             res_df["bias_se"].append(diff.std() / np.sqrt(diff.shape[0]))
+            res_df["pct_bias"].append(diff.mean()/true_beta_x*100)
             if not ana_args["no_ci"]:
                 in_ci = (
                     da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
@@ -731,8 +744,12 @@ def main():
         ]
         all_res["bias"] = [
             # f"{m:.4f}({s:.4f})" for m, s in zip(all_res["bias"], all_res["bias_sd"])
-            f"{m:.4f}({s:.4f})"
+            f"{m:.2f}({s:.2f})"
             for m, s in zip(all_res["bias"], all_res["bias_se"])
+        ]
+        all_res["pct_bias"] = [
+            f"{m:.2f}({s:.2f})"
+            for m, s in zip(all_res["pct_bias"], all_res["bias_se"])
         ]
 
         # all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)

@@ -282,11 +282,11 @@ class LapBinaryEM(BinaryEM):
                 return beta_all - beta_delta
 
             rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
-            from tqdm import tqdm
+            # from tqdm import tqdm
 
-            tqdm.write(
-                f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
-            )
+            # tqdm.write(
+            #     f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
+            # )
             beta_all = beta_all - beta_delta
             logger_embp.info(f"M step Newton-Raphson: iter={i + 1} diff={rdiff:.4f}")
             if rdiff < self._delta2_inner:
