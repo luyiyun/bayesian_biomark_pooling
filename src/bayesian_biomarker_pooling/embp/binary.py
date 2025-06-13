@@ -284,9 +284,13 @@ class LapBinaryEM(BinaryEM):
             rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
             # from tqdm import tqdm
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 
 >>>>>>> 6b91656 (iteration ignorance)
+=======
+
+>>>>>>> 5b26cdd (iteration ignorance)
             # tqdm.write(
             #     f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
             # )
