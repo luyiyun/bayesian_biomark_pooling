@@ -23,7 +23,6 @@ from bayesian_biomarker_pooling.simulate import (
 )
 from bayesian_biomarker_pooling import EMBP
 from bayesian_biomarker_pooling.utils import Timer
-import ipdb
 
 
 def method_xonly(
@@ -480,14 +479,13 @@ def main():
                 betax=args.beta_x,
                 sigma2_y=proc_args(args.sigma2_y),
             )
-        
+
         df_all = []
         for i in tqdm(range(args.n_repeats), desc="Simulate: "):
             df = simulator.simulate(seed=i + args.seed)
             df["repeat"] = i
             df_all.append(df)
         df_all = pd.concat(df_all, ignore_index=True)
-        # ipdb.set_trace()
 
         os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
         df_all.to_csv(osp.join(args.output_dir, "data.csv"), index=False)
@@ -538,8 +536,8 @@ def main():
         }
         res_all = {k: [] for k in args.methods}
 
+        if args.ncores <= 1:
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
-                fail_indices = []
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
@@ -566,6 +564,7 @@ def main():
                     res_all[k].append(v)
                 # if i >= 5:
                 #     break
+
         elif args.gpu:
             pass
             raise NotImplementedError("GPU multi-processing is not implemented yet.")

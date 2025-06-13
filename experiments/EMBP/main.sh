@@ -665,11 +665,11 @@ for n in ${num_samples[@]}; do
         done
     done
 done
-$runtool main.py summarize -efp "./scenario1001/ana_binary_wo_z_is*/eval_results.csv" -of ./scenario1001/summary_is.xlsx \
-    -sp  prevalences n_sample_per_studies OR
+# $runtool main.py summarize -efp "./scenario1001/ana_binary_wo_z_is*/eval_results.csv" -of ./scenario1001/summary_is.xlsx \
+#     -sp  prevalence n_sample_per_studies OR
 
-$runtool main.py summarize -efp "./scenario1001/ana_binary_wo_z_lap*/eval_results.csv" -of ./scenario1001/summary_lap.xlsx \
-    -sp  prevalences n_sample_per_studies OR
+# $runtool main.py summarize -efp "./scenario1001/ana_binary_wo_z_lap*/eval_results.csv" -of ./scenario1001/summary_lap.xlsx \
+#     -sp  prevalence n_sample_per_studies OR
 
 # $runtool main.py analyze -ot binary -dd ./scenario1001/data_binary_wo_z_100_0.25_0.1_1.5 -od ./scenario1001/ana_binary_wo_z_100_0.25_0.1_1.5 -nc 1
 # # ================ scenario1002: continue binary, without Z ================
