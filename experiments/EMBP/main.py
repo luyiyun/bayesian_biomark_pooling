@@ -538,7 +538,6 @@ def main():
 
         if args.ncores <= 1:
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
-                fail_indices = []
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
