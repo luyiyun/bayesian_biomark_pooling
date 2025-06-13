@@ -539,6 +539,7 @@ def main():
         res_all = {k: [] for k in args.methods}
 
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
+                fail_indices = []
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
