@@ -37,18 +37,18 @@ def bootstrap_estimator(
 
     params_bs = []
     for i in tqdm(range(n_repeat), disable=not pbar, desc="Bootstrap: ", leave=False):
-        # try:
-        ind_bs = ind_bootstrap[i]
-        estimator.run(
-            X[ind_bs],
-            S[ind_bs],
-            W[ind_bs],
-            Y[ind_bs],
-            None if Z is None else Z[ind_bs],  # nbs x N x nz
-            init_params=init_params,
-        )
-        # except Exception:
-        #     pass
+        try:
+            ind_bs = ind_bootstrap[i]
+            estimator.run(
+                X[ind_bs],
+                S[ind_bs],
+                W[ind_bs],
+                Y[ind_bs],
+                None if Z is None else Z[ind_bs],  # nbs x N x nz
+                init_params=init_params,
+            )
+        except Exception:
+            pass
         params_bs.append(estimator.parameters)
 
     return np.stack(params_bs, axis=0)

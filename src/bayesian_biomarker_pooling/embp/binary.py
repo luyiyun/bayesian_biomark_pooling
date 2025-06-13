@@ -109,11 +109,7 @@ class BinaryEM(NumpyEM):
                 "beta_0",
             ]
         )
-        beta_z = (
-            params[..., self._params_ind["beta_z"]]
-            if self._Z is not None
-            else 0.0
-        )
+        beta_z = params[..., self._params_ind["beta_z"]] if self._Z is not None else 0.0
 
         beta_0_m_long = beta_0[self._ind_m_inv]
 
@@ -147,12 +143,8 @@ class BinaryEM(NumpyEM):
             )
             self._Xm -= xdelta
 
-            rdiff = np.max(
-                np.abs(xdelta) / (np.abs(self._Xm) + self._delta1_inner)
-            )
-            logger_embp.info(
-                f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}"
-            )
+            rdiff = np.max(np.abs(xdelta) / (np.abs(self._Xm) + self._delta1_inner))
+            logger_embp.info(f"E step Newton-Raphson: iter={i} diff={rdiff:.4f}")
             if rdiff < self._delta2_inner:
                 break
         else:
@@ -268,9 +260,7 @@ class LapBinaryEM(BinaryEM):
             grad[1:] += grad_m_other
 
             # 计算hess_o
-            hess = np.einsum(
-                "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
-            )
+            hess = np.einsum("ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des)
             # 计算hess_m
             sigma2 = sigma * (1 - sigma)
             hess_m_00 = (sigma2 * h**2).mean(axis=0).sum()
@@ -291,13 +281,14 @@ class LapBinaryEM(BinaryEM):
             if self._gem:
                 return beta_all - beta_delta
 
-            rdiff = np.max(
-                np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
-            )
+            rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
+            # from tqdm import tqdm
+
+            # tqdm.write(
+            #     f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
+            # )
             beta_all = beta_all - beta_delta
-            logger_embp.info(
-                f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
-            )
+            logger_embp.info(f"M step Newton-Raphson: iter={i + 1} diff={rdiff:.4f}")
             if rdiff < self._delta2_inner:
                 break
         else:
@@ -391,9 +382,7 @@ class LapBinaryEM(BinaryEM):
             V3.insert(2, [B.T, E.T, G])
         V3 = np.block(V3)
 
-        return sc_block_diag(
-            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
-        )
+        return sc_block_diag(np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3))
 
 
 class ISBinaryEM(BinaryEM):
@@ -463,14 +452,11 @@ class ISBinaryEM(BinaryEM):
         if logger_embp.level <= logging.INFO:
             Seff = 1 / np.sum(self._WIS**2, axis=0)
             logger_embp.info(
-                "Importance effective size "
-                + f"is {Seff.mean():.2f}±{Seff.std():.2f}"
+                "Importance effective size " + f"is {Seff.mean():.2f}±{Seff.std():.2f}"
             )
 
         # 计算Xhat和Xhat2, 并讲self._Xm更新为IS计算的后验均值
-        self._Xhat[self._is_m] = self._Xm = np.sum(
-            self._XIS * self._WIS, axis=0
-        )
+        self._Xhat[self._is_m] = self._Xm = np.sum(self._XIS * self._WIS, axis=0)
         self._Xhat2[self._is_m] = np.sum(self._XIS**2 * self._WIS, axis=0)
 
     def _m_step_update_beta(self, beta_all: ndarray) -> ndarray:
@@ -481,18 +467,14 @@ class ISBinaryEM(BinaryEM):
             p_o = expit(self._Xo_des @ beta_all)  # ns
             grad = self._Xo_des.T @ (p_o - self._Yo)
             # grad_m
-            p_m = expit(
-                self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:]
-            )  # N x nm
+            p_m = expit(self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:])  # N x nm
             Esig = (p_m * self._WIS).sum(axis=0)
             Esigx = (p_m * WXIS).sum(axis=0)
             grad[0] += (Esigx - self._Ym * self._Xm).sum()
             grad[1:] += self._Cm_des.T @ (Esig - self._Ym)
 
             # hess_o
-            hess = np.einsum(
-                "ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des
-            )
+            hess = np.einsum("ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des)
             p_m2 = p_m * (1 - p_m)
             hess_m_00 = (p_m2 * self._XIS**2 * self._WIS).sum(axis=0).sum()
             hess_m_01 = self._Cm_des.T @ ((p_m2 * WXIS).sum(axis=0))
@@ -513,13 +495,9 @@ class ISBinaryEM(BinaryEM):
             if self._gem:
                 return beta_all - beta_delta
 
-            rdiff = np.max(
-                np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner)
-            )
+            rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
             beta_all = beta_all - beta_delta
-            logger_embp.info(
-                f"M step Newton-Raphson: iter={i+1} diff={rdiff:.4f}"
-            )
+            logger_embp.info(f"M step Newton-Raphson: iter={i + 1} diff={rdiff:.4f}")
             if rdiff < self._delta2_inner:
                 break
         else:
@@ -536,9 +514,7 @@ class ISBinaryEM(BinaryEM):
                 (self._max_nIS - self._min_nIS)
                 * expit(2 * LOGIT_3 * self._iter_i / self._max_iter - LOGIT_3)
             )
-            logger_embp.info(
-                f"Update Monte Carlo Sampling size to {self._nIS}."
-            )
+            logger_embp.info(f"Update Monte Carlo Sampling size to {self._nIS}.")
 
     def v_joint(self, params: ndarray) -> ndarray:
         mu_x, sigma2_x, a, b, sigma2_w = (
@@ -597,13 +573,11 @@ class ISBinaryEM(BinaryEM):
         p2[self._ind_o] = po * (1 - po)
         p2x = p2 * self._X
         p2xx = p2x * self._X
-        pm_ = expit(
-            self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:]
-        )  # N x n_m
+        pm_ = expit(self._XIS * beta_all[0] + self._Cm_des @ beta_all[1:])  # N x n_m
         pm2_ = pm_ * (1 - pm_) * self._WIS
         p2[self._ind_m] = pm2_.sum(axis=0)  # 注意这里是sum而非mean
         p2x[self._ind_m] = (pm2_ * self._XIS).sum(axis=0)
-        p2xx[self._ind_m] = (pm2_ * self._XIS ** 2).sum(axis=0)
+        p2xx[self._ind_m] = (pm2_ * self._XIS**2).sum(axis=0)
 
         K = np.array([[p2xx.sum()]])
         A = np.array([[p2x[ind].sum() for ind in self._ind_S]])
@@ -622,6 +596,4 @@ class ISBinaryEM(BinaryEM):
             V3.insert(2, [B.T, E.T, G])
         V3 = np.block(V3)
 
-        return sc_block_diag(
-            np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3)
-        )
+        return sc_block_diag(np.linalg.inv(V1), np.linalg.inv(V2), np.linalg.inv(V3))

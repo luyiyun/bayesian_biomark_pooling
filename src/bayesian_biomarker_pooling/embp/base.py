@@ -76,8 +76,7 @@ class EM:
 
                 rdiff = self.calc_rdiff(params_new, params)
                 logger_embp.info(
-                    f"EM iteration {self._iter_i}: "
-                    f"relative difference is {rdiff: .4f}"
+                    f"EM iteration {self._iter_i}: relative difference is {rdiff: .4f}"
                 )
                 params = params_new  # 更新
                 self.params_hist_.append(params)
@@ -89,8 +88,7 @@ class EM:
                 self.after_iter()
             else:
                 logger_embp.warning(
-                    f"EM iteration (max_iter={self._max_iter}) "
-                    "doesn't converge"
+                    f"EM iteration (max_iter={self._max_iter}) doesn't converge"
                 )
 
         self.params_ = params
@@ -129,7 +127,6 @@ class EM:
 
 
 class NumpyEM(EM):
-
     @property
     def parameter_history(self) -> ndarray:
         return np.stack(self.params_hist_)
@@ -190,9 +187,7 @@ class NumpyEM(EM):
         self._n_m = self._is_m.sum(axis=-1)
         self._n_s = np.array([indi.shape[-1] for indi in self._ind_S])
 
-        self._wbar_s = np.stack(
-            [np.mean(self._W[ind], axis=-1) for ind in self._ind_S]
-        )
+        self._wbar_s = np.stack([np.mean(self._W[ind], axis=-1) for ind in self._ind_S])
         self._wwbar_s = np.stack(
             [np.mean(self._W[ind] ** 2, axis=-1) for ind in self._ind_S]
         )
@@ -200,9 +195,7 @@ class NumpyEM(EM):
         self._sigma_ind = np.array(
             [1]
             + list(range(2 + 2 * self._ns, 2 + 2 * (self._ns + 1)))
-            + list(
-                range(3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz)
-            )
+            + list(range(3 + 4 * self._ns + self._nz, 3 + 5 * self._ns + self._nz))
         )
         self._params_ind = {
             "mu_x": slice(0, 1),
@@ -252,7 +245,7 @@ class NumpyEM(EM):
         return np.max(np.abs(old - new) / (np.abs(old) + self._delta1))
 
     def v_joint(self, params_log: ndarray) -> ndarray:
-        """ 计算Vjoint，注意的时候是对应于log sigma2进行的 """
+        """计算Vjoint，注意的时候是对应于log sigma2进行的"""
         raise NotImplementedError
 
     def estimate_variance(self) -> ndarray:
@@ -282,9 +275,7 @@ class NumpyEM(EM):
                         x = np.log(x)
                     # 计算差值比来作为导数的估计
                     dx = x - params_w_log[j]
-                    if (
-                        dx == 0
-                    ):  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
+                    if dx == 0:  # 如果dx=0了，就用上一个结果  TODO: 方差可能还没有收敛
                         continue
 
                     self.e_step(inpt)
@@ -297,15 +288,12 @@ class NumpyEM(EM):
                 # 看一下有哪些行完成了收敛
                 if t > 0:
                     rdiff = np.max(
-                        np.abs(Rt - R[-1])
-                        / (np.abs(R[-1]) + self._delta1_var),
+                        np.abs(Rt - R[-1]) / (np.abs(R[-1]) + self._delta1_var),
                         axis=1,
                     )
                     new_rind_uncovg = np.nonzero(rdiff >= self._delta2_var)[0]
                     if len(new_rind_uncovg) < len(rind_uncovg):
-                        logger_embp.info(
-                            "unfinished row ind:" + str(rind_uncovg)
-                        )
+                        logger_embp.info("unfinished row ind:" + str(rind_uncovg))
                     rind_uncovg = new_rind_uncovg
 
                 R.append(Rt)
