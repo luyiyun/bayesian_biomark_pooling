@@ -428,7 +428,7 @@ def main():
     # ================= 读取模拟数据，进行模拟实验 =================
     fn = "./example_binary_error/data.csv"
     df_all = pd.read_csv(fn, index_col=None)
-    for ri in range(766, 767):
+    for ri in range(760, 770):
         print(f"repeat {ri}")
         df = df_all.query(f"repeat == {ri}")
         print(df.head())
@@ -442,7 +442,7 @@ def main():
             "gem": args.gem,
             "quasi_mc_K": args.quasi_K,
             "delta2": args.delta2,
-            "binary_solve": args.binary_solve,
+            "binary_solve": "vi",
             "device": "cuda:0" if args.gpu else "cpu",
             "importance_sampling_maxK": args.importance_sampling_maxK,
         }
@@ -466,7 +466,11 @@ def main():
             args.methods,
             embp_kwargs,
         )
-        print(res)
+
+        for methodi, resi in res.items():
+            print(f"method: {methodi}")
+            print(resi)
+        print()
     return
 
     # ================= 读取实验结果和模拟参数，计算评价指标 =================

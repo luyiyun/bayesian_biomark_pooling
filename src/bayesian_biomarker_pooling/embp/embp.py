@@ -13,6 +13,7 @@ from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
 from .binary import LapBinaryEM, ISBinaryEM
+from .binary_vem import VIBinaryEM
 
 
 def bootstrap_estimator(
@@ -75,7 +76,7 @@ class EMBP(BiomarkerPoolBase):
         device: str = "cpu",
         quasi_mc_K: int = 100,
         gem: bool = False,
-        binary_solve: Literal["lap", "is"] = "is",
+        binary_solve: Literal["lap", "is", "vi"] = "is",
         importance_sampling_minK: int = 100,
         importance_sampling_maxK: int = 5000,
     ) -> None:
@@ -85,7 +86,7 @@ class EMBP(BiomarkerPoolBase):
         """
         assert outcome_type in ["continue", "binary"]
         assert ci_method in ["bootstrap", "sem"]
-        assert binary_solve in ["lap", "is"]
+        assert binary_solve in ["lap", "is", "vi"]
         if device != "cpu":
             try:
                 import torch
@@ -177,6 +178,21 @@ class EMBP(BiomarkerPoolBase):
         elif self.outcome_type_ == "binary":
             if self.binary_solve_ == "lap":
                 self._estimator = LapBinaryEM(
+                    max_iter=self.max_iter_,
+                    max_iter_inner=self.max_iter_inner_,
+                    delta1=self.delta1_,
+                    delta1_inner=self.delta1_inner_,
+                    delta1_var=self.delta1_var_,
+                    delta2=self.delta2_,
+                    delta2_inner=self.delta2_inner_,
+                    delta2_var=self.delta2_var_,
+                    pbar=self.pbar_,
+                    random_seed=self.seed_,
+                    K=self.quasi_mc_K_,
+                    gem=self.gem_,
+                )
+            elif self.binary_solve_ == "vi":
+                self._estimator = VIBinaryEM(
                     max_iter=self.max_iter_,
                     max_iter_inner=self.max_iter_inner_,
                     delta1=self.delta1_,
