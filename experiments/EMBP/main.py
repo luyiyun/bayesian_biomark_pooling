@@ -341,7 +341,7 @@ def main():
         "-bs",
         "--binary_solve",
         default="lap",
-        choices=["lap", "is"],
+        choices=["lap", "is", "vi"],
         help="method to aproximate posterior distribution for binary "
         "outcome, can be lap(Laplace approximation) or "
         "is(importance sampling), default is lap",

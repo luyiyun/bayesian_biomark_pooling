@@ -78,16 +78,16 @@ runtool="python"
 # $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试 (binary outcome)
-# nrepeat=10
-# ncore=1
-# data_dir=./example_binary_2/data
-# ana_dir=./example_binary_2/results
-# eval_fn=eval_results.csv
-# outcome_type=binary
+nrepeat=10
+ncore=1
+data_dir=./example_binary_2/data
+ana_dir=./example_binary_2/results
+eval_fn=eval_results.csv
+outcome_type=binary
 # $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
 #     --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
-# $runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore
-# $runtool main.py evaluate -ad $ana_dir -of $eval_fn
+$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore --binary_solve vi
+$runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试
 # data_dir=./example_continue_xonly_1/data
