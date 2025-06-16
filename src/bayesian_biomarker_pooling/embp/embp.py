@@ -12,8 +12,7 @@ from scipy.special import ndtri
 from ..base import BiomarkerPoolBase
 from .base import EM
 from .continuous import ContinueEM
-from .binary import LapBinaryEM, ISBinaryEM
-from .binary_vem import VIBinaryEM
+from .binary import LapBinaryEM, ISBinaryEM, VIBinaryEM
 
 
 def bootstrap_estimator(

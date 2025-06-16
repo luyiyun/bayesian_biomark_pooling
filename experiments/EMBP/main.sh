@@ -38,7 +38,7 @@ eval_fn=eval_results.csv
 outcome_type=binary
 # $runtool main.py simulate -ot $outcome_type -od $data_dir --seed 1 \
 #     --n_samples 100 --ratio_observed_x 0.1 -pr 0.5 --OR 2.0 -nr $nrepeat
-$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore --binary_solve vi
+$runtool main.py analyze -ot $outcome_type -dd $data_dir -od $ana_dir -nc $ncore --binary_solve vi -epb
 $runtool main.py evaluate -ad $ana_dir -of $eval_fn
 
 # 单次实验测试
