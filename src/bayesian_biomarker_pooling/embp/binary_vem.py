@@ -8,7 +8,7 @@ from ..logger import logger_embp
 class VIBinaryEM(LapBinaryEM):
     def prepare(self, X, S, W, Y, Z=None):
         super().prepare(X, S, W, Y, Z)
-        self._xi_m = np.zeros(self._n_m)
+        self._xi_m = np.ones(self._n_m)
         self._Vm = np.ones(self._n_m)
 
     def e_step(self, params: ndarray):
