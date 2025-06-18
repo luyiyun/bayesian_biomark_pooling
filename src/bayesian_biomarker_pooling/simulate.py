@@ -132,6 +132,13 @@ class Simulator:
     def generate_mask(self, rng, X, W, Y, Z) -> np.ndarray:
         raise NotImplementedError
 
+    def generate_group(self, rng, X, W, Y, Z) -> np.ndarray:
+        # 从1开始
+        return np.repeat(
+            np.arange(1, len(self.n_sample_per_studies) + 1),
+            self.n_sample_per_studies,
+        )
+
     def simulate(self, seed: int | None = None) -> pd.DataFrame:
         rng = np.random.default_rng(seed)
         a = np.repeat(self.a, self.n_sample_per_studies)
@@ -165,6 +172,7 @@ class Simulator:
             Y_ += np.dot(Z, self.betaz)
 
         Y = self.generate_Y(rng, X, W, Y_, Z)
+        group = self.generate_group(rng, X, W, Y, Z)
         mask = self.generate_mask(rng, X, W, Y, Z)
 
         X_obs = X.copy()
@@ -176,11 +184,7 @@ class Simulator:
                 "X_true": X,
                 "Y": Y,
                 "X": X_obs,
-                # 从1开始
-                "S": np.repeat(
-                    np.arange(1, len(self.n_sample_per_studies) + 1),
-                    self.n_sample_per_studies,
-                ),
+                "S": group,
                 "H": ~mask,
             }
         )
@@ -238,8 +242,12 @@ class BinarySimulator(Simulator):
                 if self.n_knowX_balance:
                     Yi = Y[start:end]
                     n_nan = ni - nxi
-                    n_nan_0 = int(n_nan * (Yi == 0).mean())
-                    n_nan_1 = n_nan - n_nan_0
+                    # NOTE: 把n_nan_1放在前面，注意到，Yi=1且可观测的样本量是nxi * (Yi==1).mean()
+                    # 比如nxi是10个人，但是(Yi==1).mean()是0.05时，这个样本量<1。
+                    # 把n_nan_1（Yi=1且不可观测)放在前面，其用int向下取整，则会保证
+                    # Yi=1且可观测的样本量 至少有1个，从而避免出现这一类样本量为0的情况。
+                    n_nan_1 = int(n_nan * (Yi == 1).mean())
+                    n_nan_0 = n_nan - n_nan_1
                     nan_ind0 = rng.choice(
                         np.nonzero(Yi == 0)[0], n_nan_0, replace=False
                     )
