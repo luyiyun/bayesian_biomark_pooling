@@ -1,5 +1,6 @@
 import os
 import os.path as osp
+import sys
 import multiprocessing as mp
 import re
 import json
@@ -537,7 +538,8 @@ def main():
             "importance_sampling_maxK": args.importance_sampling_maxK,
         }
         res_all = {k: [] for k in args.methods}
-
+        
+        if args.ncores <= 1:
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
                 fail_indices = []
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
@@ -637,8 +639,15 @@ def main():
                         continue
                     for k, v in resi.items():
                         res_all[k].append(v)
-        if v is None:
+        if all(len(res_i) == 0 for res_i in res_all.values()):
             print("unable to analyze all the data")
+            os.makedirs(args.output_dir, exist_ok=False)  # 确保目录不存在
+            empty_ds = xr.Dataset()  # 创建一个空的 Dataset
+            empty_ds.to_netcdf(osp.join(args.output_dir, "analyzed_results.nc"))
+            with open(osp.join(args.output_dir, "params.json"), "w") as f:
+                ana_args = args.__dict__
+                json.dump(ana_args, f)
+            return
         else:
             res_all = {
                 k: xr.DataArray(
@@ -685,26 +694,33 @@ def main():
         true_beta_x = simu_args["betax"]
 
         res = xr.load_dataset(osp.join(args.analyzed_dir, "analyzed_results.nc"))
-        index, res_df = [], defaultdict(list)
-        for k, da in res.items():
-            index.append(k)
-            diff = da.sel(params="beta_x", statistic="estimate").values - true_beta_x
-            res_df["bias"].append(diff.mean())
-            res_df["mse"].append((diff**2).mean())
-            res_df["bias_se"].append(diff.std() / np.sqrt(diff.shape[0]))
-            res_df["pct_bias"].append(diff.mean()/true_beta_x*100)
-            if not ana_args["no_ci"]:
-                in_ci = (
-                    da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
-                ) & (da.sel(params="beta_x", statistic="CI_2").values >= true_beta_x)
-                res_df["cov_rate"].append(in_ci.mean())
-            time_arr = da.sel(params="time", statistic="estimate").values
-            res_df["time_mean"].append(time_arr.mean())
-            res_df["time_se"].append(time_arr.std() / np.sqrt(time_arr.shape[0]))
+        if len(res.data_vars) == 0:
+            sys.exit()
+        else:
+            index, res_df = [], defaultdict(list)
+            for k, da in res.items():
+                index.append(k)
+                diff = da.sel(params="beta_x", statistic="estimate").values - true_beta_x
+                res_df["bias"].append(diff.mean())
+                res_df["ab_bias"].append(np.abs(diff).mean())
+                res_df["mse"].append((diff**2).mean())
+                res_df["bias_se"].append(diff.std() / np.sqrt(diff.shape[0]))
+                res_df["ab_bias_se"].append(np.abs(diff).std() / np.sqrt(diff.shape[0]))
+                res_df["pct_bias"].append(diff.mean()/true_beta_x*100)
+                res_df["pct_ab_bias"].append(np.abs(diff).mean()/true_beta_x*100)
+                res_df["counts"].append(diff.shape[0])
+                if not ana_args["no_ci"]:
+                    in_ci = (
+                        da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
+                    ) & (da.sel(params="beta_x", statistic="CI_2").values >= true_beta_x)
+                    res_df["cov_rate"].append(in_ci.mean())
+                time_arr = da.sel(params="time", statistic="estimate").values
+                res_df["time_mean"].append(time_arr.mean())
+                res_df["time_se"].append(time_arr.std() / np.sqrt(time_arr.shape[0]))
 
-        res_df = pd.DataFrame(res_df, index=index)
-        print(res_df)
-        res_df.to_csv(output_file)
+            res_df = pd.DataFrame(res_df, index=index)
+            print(res_df)
+            res_df.to_csv(output_file)
 
     # ================= 读取读取多次实验的结果，整合为一个表格 =================
     if args.subcommand == "summarize":
@@ -732,10 +748,12 @@ def main():
         # all_res["time_sd"] *= np.sqrt(1000)*100
         all_res["time_se"] *= 100
         all_res["bias"] *= 100
+        all_res["ab_bias"] *= 100
         all_res["mse"] *= 100
         all_res["cov_rate"] *= 100
         # all_res["bias_sd"] *= np.sqrt(1000) *100
         all_res["bias_se"] *= 100
+        all_res["ab_bias_se"] *= 100
 
         all_res["time"] = [
             # f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_sd"])
@@ -751,9 +769,18 @@ def main():
             f"{m:.2f}({s:.2f})"
             for m, s in zip(all_res["pct_bias"], all_res["bias_se"])
         ]
+        all_res["ab_bias"] = [
+            # f"{m:.4f}({s:.4f})" for m, s in zip(all_res["bias"], all_res["bias_sd"])
+            f"{m:.2f}({s:.2f})"
+            for m, s in zip(all_res["ab_bias"], all_res["ab_bias_se"])
+        ]
+        all_res["pct_ab_bias"] = [
+            f"{m:.2f}({s:.2f})"
+            for m, s in zip(all_res["pct_ab_bias"], all_res["ab_bias_se"])
+        ]
 
         # all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)
-        all_res.drop(columns=["time_mean", "time_se", "bias_se"], inplace=True)
+        all_res.drop(columns=["time_mean", "time_se", "bias_se","ab_bias_se","counts"], inplace=True)
         all_res.index.name = "methods"
         all_res.set_index(args.summarize_parameters, append=True, inplace=True)
         all_res = all_res.unstack(level=-1).swaplevel(0, -1).swaplevel(0, -1, axis=1)
