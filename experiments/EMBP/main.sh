@@ -658,8 +658,8 @@ runtool="python"
 #         done
 #     done
 # done
-$runtool main.py summarize -efp "./scenario2010/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2010/summary.xlsx \
-    -sp  n_samples betax 
+# $runtool main.py summarize -efp "./scenario2010/ana_continue_wo_z_*/eval_results.csv" -of ./scenario2010/summary.xlsx \
+#     -sp  n_samples betax 
 # n=100
 # pr=0.05
 # rx=0.1
