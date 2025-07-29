@@ -240,21 +240,24 @@ class BinarySimulator(Simulator):
                 raise ValueError("nsamples(%d) < nKnowX(%d)" % (ni, nxi))
             elif ni > nxi:
                 if self.n_knowX_balance:
-                    Yi = Y[start:end]
-                    n_nan = ni - nxi
-                    # NOTE: 把n_nan_1放在前面，注意到，Yi=1且可观测的样本量是nxi * (Yi==1).mean()
-                    # 比如nxi是10个人，但是(Yi==1).mean()是0.05时，这个样本量<1。
-                    # 把n_nan_1（Yi=1且不可观测)放在前面，其用int向下取整，则会保证
-                    # Yi=1且可观测的样本量 至少有1个，从而避免出现这一类样本量为0的情况。
-                    n_nan_1 = int(n_nan * (Yi == 1).mean())
-                    n_nan_0 = n_nan - n_nan_1
-                    nan_ind0 = rng.choice(
-                        np.nonzero(Yi == 0)[0], n_nan_0, replace=False
-                    )
-                    nan_ind1 = rng.choice(
-                        np.nonzero(Yi == 1)[0], n_nan_1, replace=False
-                    )
-                    nan_ind = np.concatenate([nan_ind0, nan_ind1]) + start
+                    if nxi == 0:
+                        nan_ind = rng.choice(np.arange(start, end), ni - nxi, replace=False)
+                    else:
+                        Yi = Y[start:end]
+                        n_nan = ni - nxi
+                        # NOTE: 把n_nan_1放在前面，注意到，Yi=1且可观测的样本量是nxi * (Yi==1).mean()
+                        # 比如nxi是10个人，但是(Yi==1).mean()是0.05时，这个样本量<1。
+                        # 把n_nan_1（Yi=1且不可观测)放在前面，其用int向下取整，则会保证
+                        # Yi=1且可观测的样本量 至少有1个，从而避免出现这一类样本量为0的情况。
+                        n_nan_1 = int(n_nan * (Yi == 1).mean())
+                        n_nan_0 = n_nan - n_nan_1
+                        nan_ind0 = rng.choice(
+                            np.nonzero(Yi == 0)[0], n_nan_0, replace=False
+                        )
+                        nan_ind1 = rng.choice(
+                            np.nonzero(Yi == 1)[0], n_nan_1, replace=False
+                        )
+                        nan_ind = np.concatenate([nan_ind0, nan_ind1]) + start
                 else:
                     nan_ind = rng.choice(np.arange(start, end), ni - nxi, replace=False)
                 mask[nan_ind] = True

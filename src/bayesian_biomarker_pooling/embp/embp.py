@@ -274,6 +274,7 @@ class EMBP(BiomarkerPoolBase):
                 seed=self.seed_,
                 pbar=self.pbar_,
             )
+            self.res_bootstrap_ = pd.DataFrame(res_bootstrap, columns=self._estimator.parameter_names)
             res_ci = np.quantile(
                 res_bootstrap,
                 q=[quan1, quan2],

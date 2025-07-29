@@ -426,12 +426,12 @@ def main():
     args = parser.parse_args()
 
     # ================= 读取模拟数据，进行模拟实验 =================
-    fn = "./example_binary_error/data.csv"
+    fn = "/mnt/e/SongJL/016_research/EMBP/bayesian_biomark_pooling/experiments/embp/test/scenario1003/data/binary_wo_z_100_0.1_0.1_2/data.csv"
     df_all = pd.read_csv(fn, index_col=None)
-    for ri in range(760, 770):
+    for ri in range(2,4):
         print(f"repeat {ri}")
         df = df_all.query(f"repeat == {ri}")
-        print(df.head())
+        print(df.head(10))
         embp_kwargs = {
             "ci": not args.no_ci,
             "ci_method": args.ci_method,

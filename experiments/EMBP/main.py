@@ -17,6 +17,7 @@ from tqdm import tqdm
 import statsmodels.api as sm
 import torch
 
+import sys
 from bayesian_biomarker_pooling.simulate import (
     BinarySimulator,
     ContinuousSimulator,
@@ -91,7 +92,7 @@ def analyze_data(
                     return None
             else:
                 raise ValueError(f"Unknown method: {methodi}")
-
+                
         if methodi == "embp":
             resi = pd.concat(
                 [resi, pd.DataFrame({"estimate": [t.interval]}, index=["time"])], axis=0
@@ -540,8 +541,10 @@ def main():
         res_all = {k: [] for k in args.methods}
         
         if args.ncores <= 1:
+            # skip_repeats = {3,5, 35, 67}
             for i, dfi in tqdm(df_iter, desc="Analyze: "):
-                fail_indices = []
+                # if i not in skip_repeats:
+                #     continue
                 zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                 X = dfi["X"].values
                 Y = dfi["Y"].values
@@ -561,7 +564,8 @@ def main():
                     args.methods,
                     embp_kwargs,
                 )
-                
+
+                import ipdb;ipdb.set_trace()
                 if resi is None:
                     continue
                 for k, v in resi.items():
@@ -607,7 +611,10 @@ def main():
         else:  # use cpu multi-processing
             with mp.Pool(args.ncores) as pool:
                 tmp_reses = []
+                # skip_repeats = {3,5, 35, 67} 
                 for i, dfi in df_iter:
+                    # if i not in skip_repeats:
+                    #     continue
                     zind = dfi.columns.map(lambda x: re.search(r"Z\d*", x) is not None)
                     X = dfi["X"].values
                     Y = dfi["Y"].values
@@ -713,7 +720,7 @@ def main():
                     in_ci = (
                         da.sel(params="beta_x", statistic="CI_1").values <= true_beta_x
                     ) & (da.sel(params="beta_x", statistic="CI_2").values >= true_beta_x)
-                    res_df["cov_rate"].append(in_ci.mean())
+                    res_df["cov_rate"].append(in_ci.mean())                    
                 time_arr = da.sel(params="time", statistic="estimate").values
                 res_df["time_mean"].append(time_arr.mean())
                 res_df["time_se"].append(time_arr.std() / np.sqrt(time_arr.shape[0]))
@@ -757,7 +764,7 @@ def main():
 
         all_res["time"] = [
             # f"{m:.4f}±{s:.4f}" for m, s in zip(all_res["time_mean"], all_res["time_sd"])
-            f"{m:.4f}±{s:.4f}"
+            f"{m:.4f}({s:.4f})"
             for m, s in zip(all_res["time_mean"], all_res["time_se"])
         ]
         all_res["bias"] = [
@@ -780,7 +787,7 @@ def main():
         ]
 
         # all_res.drop(columns=["time_mean", "time_sd", "bias_sd"], inplace=True)
-        all_res.drop(columns=["time_mean", "time_se", "bias_se","ab_bias_se","counts"], inplace=True)
+        all_res.drop(columns=["time_mean", "time_se", "bias_se","ab_bias_se"], inplace=True)
         all_res.index.name = "methods"
         all_res.set_index(args.summarize_parameters, append=True, inplace=True)
         all_res = all_res.unstack(level=-1).swaplevel(0, -1).swaplevel(0, -1, axis=1)

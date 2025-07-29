@@ -1,15 +1,16 @@
 import logging
 
 import numpy as np
-from scipy.special import expit, ndtri, log_expit, softmax
+from scipy.special import expit, ndtri, log_expit, softmax, log1p
 from numpy import ndarray
 from numpy.random import Generator
 from scipy.stats import norm as norm_sc
 from scipy.linalg import block_diag as sc_block_diag
+from scipy.optimize import minimize
 
 from ..logger import logger_embp
 from .base import NumpyEM
-from .utils import logistic
+from .utils import logistic, logistic_bfgs, logistic_bayes
 
 
 EPS = 1e-5
@@ -93,7 +94,7 @@ class BinaryEM(NumpyEM):
     def init(self) -> ndarray:
         """初始化权重"""
         params = super().init()
-        beta = logistic(self._Xo, self._Yo, self._Zo)
+        beta = logistic_bayes(self._Xo, self._Yo, self._Zo)
         return np.concatenate([params, beta[[0] + [1] * self._ns], beta[2:]])
 
     def e_step(self, params: ndarray):
@@ -242,62 +243,221 @@ class LapBinaryEM(BinaryEM):
         self._Xhat[self._is_m] = self._Xm
         self._Xhat2[self._is_m] = self._Xm**2 + self._Vm
 
+    def loss_grad_loge(self, h, beta_all: ndarray):
+        # 完整数据
+        Xbeta_o = self._Xo_des @ beta_all
+        p_o = expit(Xbeta_o) 
+        log_p_o = log_expit(Xbeta_o)
+        log_1p_o = log_expit(-Xbeta_o)
+        # 计算grad_o
+        grad = self._Xo_des.T @ (p_o - self._Yo)
+        # 计算loss_o
+        loss_o = -2*np.sum(self._Yo * log_p_o + (1-self._Yo) * log_1p_o)
+        
+        Xbeta_m = beta_all[0] * h + self._Cm_des @ beta_all[1:]
+        p_m = expit(Xbeta_m)   
+        log_p_m = log_expit(Xbeta_m) 
+        log_1p_m = log_expit(-Xbeta_m)
+        # 计算grad_m
+        Esig = p_m.mean(axis=0)
+        Esigx = (p_m * h).mean(axis=0)
+        grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
+        grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
+        grad[0] += grad_m_betax  # inplace更快
+        grad[1:] += grad_m_other
+        # 计算loss_m
+        Elog_p = log_p_m.mean(axis=0)
+        Elog_1p = log_1p_m.mean(axis=0)
+        loss_m = -2*np.sum(self._Ym * Elog_p + (1-self._Ym) * Elog_1p)
+        
+        return loss_o + loss_m, grad
+    
+    def loss_grad_function(self, h, beta_all: ndarray):
+        p_o = expit(self._Xo_des @ beta_all) 
+        p_m = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
+
+        eps = 1e-9
+        p_o = np.clip(p_o, eps, 1 - eps)
+        p_m = np.clip(p_m, eps, 1 - eps)
+        
+        # 完整数据
+        loss_o = -2*np.sum(self._Yo * np.log(p_o) + (1-self._Yo) * np.log(1-p_o))
+        grad = self._Xo_des.T @ (p_o - self._Yo)
+        
+        # 缺失数据
+        Elsig = np.log(p_m).mean(axis=0)
+        Elsig_1 = np.log(1-p_m).mean(axis=0)
+        loss_m = -2*np.sum(self._Ym * Elsig + (1-self._Ym) * Elsig_1)
+        
+        Esig = p_m.mean(axis=0)
+        Esigx = (p_m * h).mean(axis=0)
+        grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
+        grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
+        grad[0] += grad_m_betax # inplace更快
+        grad[1:] += grad_m_other
+        return loss_o + loss_m, grad
+    
     def _m_step_update_beta(self, beta_all: ndarray):
-        # NOTE: 我自己的实现更快
-        # 使用这个替代ppf函数，更快
         h = self._ppf_sn[:, None] * self._Xm_Sigma + self._Xm
-        for i in range(self._max_iter_inner):
-            # 计算grad_o
-            p_o = expit(self._Xo_des @ beta_all)  # no
-            grad = self._Xo_des.T @ (p_o - self._Yo)
-            # 计算grad_m
-            sigma = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
-            Esig = sigma.mean(axis=0)
-            Esigx = (sigma * h).mean(axis=0)
-            grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
-            grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
-            grad[0] += grad_m_betax  # inplace更快
-            grad[1:] += grad_m_other
-
-            # 计算hess_o
-            hess = np.einsum("ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des)
-            # 计算hess_m
-            sigma2 = sigma * (1 - sigma)
-            hess_m_00 = (sigma2 * h**2).mean(axis=0).sum()
-            hess_m_01 = self._Cm_des.T @ (sigma2 * h).mean(axis=0)
-            hess_m_11 = np.einsum(
-                "ij,i,ik", self._Cm_des, sigma2.mean(axis=0), self._Cm_des
-            )
-            hess_m = np.block(  # 这种比inplace替换([]+=)更快
-                [
-                    [hess_m_00, hess_m_01[None, :]],
-                    [hess_m_01[:, None], hess_m_11],
-                ]
-            )
-            hess = hess + hess_m
-
-            beta_delta = np.linalg.solve(hess, grad)
-
-            if self._gem:
-                return beta_all - beta_delta
-
-            rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
-            # from tqdm import tqdm
-            # tqdm.write(
-            #     f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
-            # )
-            beta_all = beta_all - beta_delta
-            logger_embp.info(f"M step Newton-Raphson: iter={i + 1} diff={rdiff:.4f}")
-            if rdiff < self._delta2_inner:
-                break
-        else:
-            logger_embp.warning(
-                f"M step Newton-Raphson (max_iter={self._max_iter_inner})"
-                " doesn't converge"
-            )
-
+        result = minimize(
+            fun=lambda beta: self.loss_grad_function(h, beta),   
+            # fun=lambda beta: self.loss_grad_loge(h, beta),           
+            x0=beta_all,   
+            jac=True,         
+            method="BFGS",     
+        )
+        beta_all = result.x
         return beta_all
+      
+    # def _m_step_update_beta(self, beta_all: ndarray, stability):
+    #     h = self._ppf_sn[:, None] * self._Xm_Sigma + self._Xm
+    #     if stability == "expit":
+    #         result = minimize(
+    #             fun=lambda beta: self.loss_grad_function(h, beta),              
+    #             x0=beta_all,   
+    #             jac=True,         
+    #             method="BFGS",     
+    #         )
+    #     elif stability == "log_expit":
+    #         result = minimize(
+    #             fun=lambda beta: self.loss_grad_function(h, beta),             
+    #             x0=beta_all,   
+    #             jac=True,         
+    #             method="BFGS",     
+    #         )
+    #     else:
+    #         raise ValueError(f"Unknown stability method")
+    #     beta_all = result.x
+    #     return beta_all
+    
+        # # NOTE: 我自己的实现更快
+        # # 使用这个替代ppf函数，更快
+        # h = self._ppf_sn[:, None] * self._Xm_Sigma + self._Xm
+        # for i in range(self._max_iter_inner):
+        #     # 计算grad_o
+        #     p_o = expit(self._Xo_des @ beta_all)  # no
+        #     grad = self._Xo_des.T @ (p_o - self._Yo)
+        #     # 计算grad_m
+        #     sigma = expit(beta_all[0] * h + self._Cm_des @ beta_all[1:])
+        #     Esig = sigma.mean(axis=0)
+        #     Esigx = (sigma * h).mean(axis=0)
+        #     grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
+        #     grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
+        #     grad[0] += grad_m_betax  # inplace更快
+        #     grad[1:] += grad_m_other
 
+        #     # 计算hess_o
+        #     hess = np.einsum("ij,i,ik->jk", self._Xo_des, p_o * (1 - p_o), self._Xo_des)
+        #     # 计算hess_m
+        #     sigma2 = sigma * (1 - sigma)
+        #     hess_m_00 = (sigma2 * h**2).mean(axis=0).sum()
+        #     hess_m_01 = self._Cm_des.T @ (sigma2 * h).mean(axis=0)
+        #     hess_m_11 = np.einsum(
+        #         "ij,i,ik", self._Cm_des, sigma2.mean(axis=0), self._Cm_des
+        #     )
+        #     hess_m = np.block(  # 这种比inplace替换([]+=)更快
+        #         [
+        #             [hess_m_00, hess_m_01[None, :]],
+        #             [hess_m_01[:, None], hess_m_11],
+        #         ]
+        #     )
+        #     hess = hess + hess_m
+
+        #     beta_delta = np.linalg.solve(hess, grad)
+
+        #     if self._gem:
+        #         return beta_all - beta_delta
+
+            # rdiff = np.max(np.abs(beta_delta) / (np.abs(beta_all) + self._delta1_inner))
+            # # from tqdm import tqdm
+            # # tqdm.write(
+            # #     f"i: {i}, old_beta: {beta_all}, new_beta: {beta_all - beta_delta}"
+            # # )
+            # beta_all = beta_all - beta_delta
+            # logger_embp.info(f"M step Newton-Raphson: iter={i + 1} diff={rdiff:.4f}")
+            # if rdiff < self._delta2_inner:
+            #     break
+        # else:
+        #     logger_embp.warning(
+        #         f"M step Newton-Raphson (max_iter={self._max_iter_inner})"
+        #         " doesn't converge"
+        #     )
+
+        # return beta_all
+    # def _grad(self, h: ndarray, beta: ndarray) -> ndarray:
+    #     # 计算grad_o
+    #     p_o = expit(self._Xo_des @ beta)
+    #     grad = self._Xo_des.T @ (p_o - self._Yo)
+    #     # 计算grad_m
+    #     sigma = expit(beta[0] * h + self._Cm_des @ beta[1:])
+    #     Esig  = sigma.mean(axis=0)
+    #     Esigx = (sigma * h).mean(axis=0)
+    #     grad_m_betax = (Esigx - self._Ym * self._Xm).sum()
+    #     grad_m_other = self._Cm_des.T @ (Esig - self._Ym)
+    #     grad[0] += grad_m_betax  # inplace更快
+    #     grad[1:] += grad_m_other
+
+    #     return grad
+    
+    # def _m_step_update_beta(self, beta_all: ndarray):
+    #   # NOTE: 这个函数是手动实现版本，不想用损失函数，效果不好，先不调了
+    #     # 使用这个替代ppf函数，更快
+    #     h = self._ppf_sn[:, None] * self._Xm_Sigma + self._Xm
+    #     beta = beta_all.copy()
+    #     n = beta.size
+    #     Hinv = np.eye(n)                         # 初始逆 Hessian 近似
+    #     grad = self._grad(h, beta)
+    #     grad_delta0 = None
+    #     beta_delta0 = None
+            
+    #     for i in range(self._max_iter_inner):                
+    #         if beta_delta0 is None:
+    #             alpha = 1.0
+    #         else:
+    #             denom = beta_delta0.dot(grad_delta0)
+    #             if denom > 1e-12:
+    #                 alpha = beta_delta0.dot(beta_delta0) / denom
+    #             else:
+    #                 alpha = 1.0
+                
+    #         beta_delta = alpha * (- Hinv @ grad)
+    #         beta_new = beta + beta_delta
+    #         grad_new = self._grad(h, beta_new)
+    #         grad_delta   = grad_new - grad
+            
+    #         ys = grad_delta.dot(beta_delta)
+    #         eps = 1e-8
+    #         if ys <= eps:
+    #             corr = (eps - ys) / (beta_delta.dot(beta_delta))
+    #             y_mod = grad_delta + corr * beta_delta
+    #             rho = 1.0 / (y_mod.dot(beta_delta))
+    #             V   = np.eye(n) - rho * np.outer(beta_delta, y_mod)
+    #             Hinv = V @ Hinv @ V.T + rho * np.outer(beta_delta, beta_delta)
+    #         else:
+    #             rho = 1.0 / ys
+    #             V   = np.eye(n) - rho * np.outer(beta_delta, grad_delta)
+    #             Hinv = V @ Hinv @ V.T + rho * np.outer(beta_delta, beta_delta)
+
+    #         Hinv = 0.5 * (Hinv + Hinv.T)
+    #         w, v = np.linalg.eigh(Hinv)
+    #         w_clipped = np.clip(w, eps, None)
+    #         Hinv = (v * w_clipped) @ v.T
+
+    #         rdiff = np.max(np.abs(beta_delta) / (np.abs(beta) + self._delta1_inner))
+    #         beta, grad = beta_new, grad_new
+    #         beta_delta0, grad_delta0 = beta_delta, grad_delta
+    #         logger_embp.info(f"M step BFGS: iter={i+1} rdiff={rdiff:.4e}")
+    #         if rdiff < self._delta2_inner:
+    #             break
+    #     else:
+    #         logger_embp.warning(
+    #             f"M step BFGS (max_iter={self._max_iter_inner})"
+    #             " doesn't converge"
+    #         )
+
+    #     return beta 
+
+      
     def v_joint(self, params: ndarray) -> ndarray:
         mu_x, sigma2_x, a, b, sigma2_w = (
             params[self._params_ind[k]]
