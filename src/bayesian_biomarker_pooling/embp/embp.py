@@ -26,11 +26,14 @@ def bootstrap_estimator(
     n_repeat: int = 200,
     seed: int | None | Generator = None,
     pbar: bool = True,
+    init_disturb: None | float = None,
 ) -> pd.DataFrame:
-    if isinstance(estimator, EM):
-        assert hasattr(estimator, "params_"), "please run regular EM iteration firstly!"
-        init_params = estimator.params_
-        estimator._pbar = False
+    assert hasattr(estimator, "params_"), "please run regular EM iteration firstly!"
+    init_params = estimator.params_
+    estimator._pbar = False
+
+    if init_disturb is not None:
+        init_params = init_params + init_disturb * np.random.randn(init_params.shape[0])
 
     seed = np.random.default_rng(seed)
     ind_bootstrap = seed.choice(Y.shape[0], (n_repeat, Y.shape[0]), replace=True)
@@ -79,6 +82,7 @@ class EMBP(BiomarkerPoolBase):
         binary_solve: Literal["lap", "is", "vi"] = "is",
         importance_sampling_minK: int = 100,
         importance_sampling_maxK: int = 5000,
+        bootstrap_init_disturb: float | None = None,
     ) -> None:
         """
         delta2: 1e-5 for continue, 1e-2 for binary
@@ -137,6 +141,7 @@ class EMBP(BiomarkerPoolBase):
         self.quasi_mc_K_ = quasi_mc_K
         self.importance_sampling_minK = importance_sampling_minK
         self.importance_sampling_maxK = importance_sampling_maxK
+        self.bootstrap_init_disturb = bootstrap_init_disturb
 
         if (device != "cpu") and (seed is not None):
             torch.random.manual_seed(seed)
@@ -273,8 +278,11 @@ class EMBP(BiomarkerPoolBase):
                 n_repeat=self.n_bootstrap_,
                 seed=self.seed_,
                 pbar=self.pbar_,
+                init_disturb=self.bootstrap_init_disturb,
             )
-            self.res_bootstrap_ = pd.DataFrame(res_bootstrap, columns=self._estimator.parameter_names)
+            self.res_bootstrap_ = pd.DataFrame(
+                res_bootstrap, columns=self._estimator.parameter_names
+            )
             res_ci = np.quantile(
                 res_bootstrap,
                 q=[quan1, quan2],
